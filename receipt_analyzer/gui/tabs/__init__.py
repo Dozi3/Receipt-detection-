@@ -1,0 +1,1 @@
+"""GUI tabs for the receipt analyzer application."""

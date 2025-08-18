@@ -11,6 +11,7 @@ import queue
 
 class LogLevel:
     """Log level constants."""
+    DEBUG = "DEBUG"
     INFO = "INFO"
     WARN = "WARN"
     FAIL = "FAIL"
@@ -126,6 +127,10 @@ class Logger:
         """Log an info message."""
         self.log(LogLevel.INFO, message)
     
+    def debug(self, message: str):
+        """Log a debug message."""
+        self.log(LogLevel.DEBUG, message)
+    
     def warn(self, message: str):
         """Log a warning message."""
         self.log(LogLevel.WARN, message)
@@ -190,6 +195,11 @@ def log_fail(message: str):
 def log_success(message: str):
     """Log a success message using the global logger."""
     get_logger().success(message)
+
+
+def log_debug(message: str):
+    """Log a debug message using the global logger."""
+    get_logger().debug(message)
 
 
 def format_pdf_log(pdf_path: str, page_num: int, message: str) -> str:

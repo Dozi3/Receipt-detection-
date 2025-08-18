@@ -14,7 +14,7 @@ from .parsing import parse_receipt_text
 from .naming import build_receipt_filename, unique_path, build_page_zip_filename
 from .vendors import VendorMap, load_vendor_map, save_vendor_map
 from .csv_export import ReceiptRecord, export_all_csv_files
-from .logging_utils import get_logger, log_info, log_success, log_warn, log_fail, format_pdf_log
+from .logging_utils import get_logger, log_info, log_success, log_warn, log_fail, log_debug, format_pdf_log, format_receipt_log
 
 
 def resize_image_for_output(image: Image.Image, max_edge: int) -> Image.Image:
@@ -37,7 +37,22 @@ def resize_image_for_output(image: Image.Image, max_edge: int) -> Image.Image:
 
 def save_image(image: Image.Image, output_path: Path, config: Config) -> bool:
     """Save image in the specified format."""
+    logger = get_logger()
+    
     try:
+        if image is None:
+            logger.warn(f"Cannot save None image to {output_path}")
+            return False
+            
+        # Check image dimensions
+        width, height = image.size
+        if width <= 0 or height <= 0:
+            logger.warn(f"Cannot save zero-dimension image ({width}x{height}) to {output_path}")
+            return False
+        
+        # Ensure output directory exists
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        
         # Resize if needed
         image = resize_image_for_output(image, config.output.max_edge)
         
@@ -59,7 +74,7 @@ def save_image(image: Image.Image, output_path: Path, config: Config) -> bool:
         return True
     
     except Exception as e:
-        get_logger().fail(f"Failed to save image to {output_path}: {e}")
+        logger.fail(f"Failed to save image to {output_path}: {e}")
         return False
 
 
@@ -73,27 +88,69 @@ def process_receipt(image: Image.Image, config: Config, vendor_map: Optional[Ven
     """
     logger = get_logger()
     
+    # Validate image
+    if image is None:
+        logger.warn(format_receipt_log(pdf_path, page_num + 1, receipt_num + 1, "null image, skipping"))
+        return None
+        
+    # Check image dimensions
+    try:
+        width, height = image.size
+        if width < 50 or height < 50:
+            logger.warn(format_receipt_log(pdf_path, page_num + 1, receipt_num + 1, 
+                                         f"image too small ({width}x{height}), skipping"))
+            return None
+    except Exception as e:
+        logger.warn(format_receipt_log(pdf_path, page_num + 1, receipt_num + 1, 
+                                     f"invalid image: {e}, skipping"))
+        return None
+    
     # Perform OCR
     text, ocr_metadata = perform_ocr(
         image, config.ocr, pdf_path, page_num, receipt_num, auto_orient=True
     )
     
     if not text:
+        logger.warn(format_receipt_log(pdf_path, page_num + 1, receipt_num + 1, 
+                                     "no text extracted, skipping"))
         return None
     
     # Parse receipt text
     keyword_map = vendor_map.keywords if vendor_map else {}
     ignored_domains = list(vendor_map.ignored_domains) if vendor_map else None
     
-    parsed_receipt = parse_receipt_text(
-        text, keyword_map, ignored_domains, pdf_path, page_num, receipt_num
-    )
-    
-    # Apply synonym resolution if vendor found
-    if parsed_receipt.vendor and vendor_map:
-        parsed_receipt.vendor = vendor_map.resolve_synonym(parsed_receipt.vendor)
-    
-    return parsed_receipt, ocr_metadata
+    try:
+        parsed_receipt = parse_receipt_text(
+            text, keyword_map, ignored_domains, pdf_path, page_num, receipt_num
+        )
+        
+        # Apply synonym resolution if vendor found
+        if parsed_receipt.vendor and vendor_map:
+            parsed_receipt.vendor = vendor_map.resolve_synonym(parsed_receipt.vendor)
+            
+        # Validate parsed data and add placeholders for missing fields
+        if not parsed_receipt.vendor:
+            logger.warn(format_receipt_log(pdf_path, page_num + 1, receipt_num + 1, 
+                                         "no vendor found, using placeholder"))
+            parsed_receipt.vendor = "Unknown_Vendor"
+            
+        if not parsed_receipt.amount:
+            logger.warn(format_receipt_log(pdf_path, page_num + 1, receipt_num + 1, 
+                                         "no amount found, using placeholder"))
+            parsed_receipt.amount = 0.0
+            
+        if not parsed_receipt.date:
+            logger.warn(format_receipt_log(pdf_path, page_num + 1, receipt_num + 1, 
+                                         "no date found, using current date"))
+            from datetime import date
+            parsed_receipt.date = date.today()
+        
+        return parsed_receipt, ocr_metadata
+        
+    except Exception as e:
+        logger.warn(format_receipt_log(pdf_path, page_num + 1, receipt_num + 1, 
+                                     f"parsing failed: {e}"))
+        return None
 
 
 def process_pdf_page(pdf_path: Path, page_num: int, config: Config, 

@@ -40,33 +40,34 @@ def safe_filename(text: str, max_length: int = 100) -> str:
     # Replace illegal characters with underscores
     safe_text = re.sub(ILLEGAL_CHARS, '_', text)
     
-    # Replace problematic characters with underscores
-    safe_text = re.sub(PROBLEMATIC_CHARS, '_', safe_text)
+    # Replace spaces with underscores
+    safe_text = safe_text.replace(' ', '_')
     
-    # Replace multiple spaces/underscores with single underscore
-    safe_text = re.sub(r'[_\s]+', '_', safe_text)
+    # Replace multiple underscores with single underscore
+    safe_text = re.sub(r'_+', '_', safe_text)
     
-    # Remove leading/trailing underscores and whitespace
-    safe_text = safe_text.strip('_').strip()
-    
-    # Ensure it's not empty
-    if not safe_text:
-        safe_text = "Unknown"
+    # Split into name and extension
+    parts = safe_text.rsplit('.', 1) if '.' in safe_text else [safe_text, '']
+    name, ext = (parts[0], '.' + parts[1]) if len(parts) > 1 and parts[1] else (safe_text, '')
     
     # Check for reserved names (Windows)
-    if safe_text.lower() in WINDOWS_RESERVED_NAMES:
-        safe_text = f"{safe_text}_file"
+    name_lower = name.lower()
+    if name_lower in WINDOWS_RESERVED_NAMES or name_lower.startswith(tuple(n + '.' for n in WINDOWS_RESERVED_NAMES)):
+        name = f"{name}_file"
     
     # Trim to max length
-    if len(safe_text) > max_length:
-        safe_text = safe_text[:max_length]
+    if len(name) > max_length:
+        name = name[:max_length]
     
     # Remove trailing dots and spaces (Windows compatibility)
-    safe_text = safe_text.rstrip('. ')
+    name = name.rstrip('. ')
     
     # Ensure it's not empty after trimming
-    if not safe_text:
-        safe_text = "Unknown"
+    if not name:
+        name = "Unknown"
+    
+    # Recombine name and extension
+    safe_text = name + ext if ext else name
     
     return safe_text
 
@@ -88,6 +89,9 @@ def build_receipt_filename(receipt: ParsedReceipt, file_extension: str = "png") 
     vendor = receipt.vendor if receipt.vendor else "Unknown"
     amount_str = format_amount_for_filename(receipt.amount)
     date_str = format_date_for_filename(receipt.date)
+    
+    # Replace special characters in vendor name
+    vendor = vendor.replace('&', 'and').replace('/', '-').replace('\\', '-')
     
     # Make vendor name safe for filename
     safe_vendor = safe_filename(vendor, max_length=50)

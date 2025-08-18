@@ -53,7 +53,19 @@ def rotate_image(image: Image.Image, angle: int) -> Image.Image:
 
 def get_text_confidence_scores(image: Image.Image, config: OCRConfig) -> Dict[str, float]:
     """Get confidence scores for text at different orientations."""
+    from .logging_utils import log_debug
+    
     confidences = {}
+    
+    # Skip orientation detection for very small images
+    width, height = image.size
+    if width < 100 or height < 100:
+        log_debug(f"Image too small for orientation detection ({width}x{height}), using 0°")
+        confidences["0°"] = 0
+        confidences["90°"] = 0
+        confidences["180°"] = 0
+        confidences["270°"] = 0
+        return confidences
     
     # Test each orientation
     for angle in [0, 90, 180, 270]:
@@ -69,12 +81,15 @@ def get_text_confidence_scores(image: Image.Image, config: OCRConfig) -> Dict[st
             conf_scores = [int(conf) for conf in data['conf'] if int(conf) > 0]
             if conf_scores:
                 mean_confidence = sum(conf_scores) / len(conf_scores)
+                log_debug(f"Angle {angle}°: {len(conf_scores)} words, avg confidence {mean_confidence:.1f}")
             else:
                 mean_confidence = 0
+                log_debug(f"Angle {angle}°: no words detected")
             
             confidences[f"{angle}°"] = mean_confidence
             
         except Exception as e:
+            log_debug(f"Error checking angle {angle}°: {e}")
             confidences[f"{angle}°"] = 0
     
     return confidences
@@ -197,9 +212,24 @@ def perform_ocr(image: Image.Image, config: OCRConfig, pdf_path: str, page_num: 
     """
     logger = get_logger()
     
-    if not check_tesseract_available()[0]:
+    # Check if image is valid
+    if image is None:
+        logger.warn(format_receipt_log(pdf_path, page_num + 1, receipt_num + 1, 
+                                     "OCR skipped: null image"))
+        return "", {}
+        
+    # Check image dimensions
+    width, height = image.size
+    if width < 20 or height < 20:
+        logger.warn(format_receipt_log(pdf_path, page_num + 1, receipt_num + 1, 
+                                     f"OCR skipped: image too small ({width}x{height})"))
+        return "", {}
+    
+    # Check Tesseract availability with timeout
+    tesseract_available, tesseract_msg = check_tesseract_available()
+    if not tesseract_available:
         logger.fail(format_receipt_log(pdf_path, page_num + 1, receipt_num + 1, 
-                                     "Tesseract not available"))
+                                     f"Tesseract not available: {tesseract_msg}"))
         return "", {}
     
     try:
@@ -209,15 +239,26 @@ def perform_ocr(image: Image.Image, config: OCRConfig, pdf_path: str, page_num: 
         }
         
         if auto_orient:
-            text, best_angle, confidences = extract_text_with_orientation(image, config)
-            metadata.update({
-                'best_angle': best_angle,
-                'confidence_scores': confidences,
-                'best_confidence': confidences.get(f"{best_angle}°", 0)
-            })
-            
-            logger.info(format_receipt_log(pdf_path, page_num + 1, receipt_num + 1,
-                                         f"OCR completed (angle: {best_angle}°, confidence: {metadata['best_confidence']:.1f})"))
+            try:
+                text, best_angle, confidences = extract_text_with_orientation(image, config)
+                metadata.update({
+                    'best_angle': best_angle,
+                    'confidence_scores': confidences,
+                    'best_confidence': confidences.get(f"{best_angle}°", 0)
+                })
+                
+                logger.info(format_receipt_log(pdf_path, page_num + 1, receipt_num + 1,
+                                            f"OCR completed (angle: {best_angle}°, confidence: {metadata['best_confidence']:.1f})"))
+            except Exception as e:
+                logger.warn(format_receipt_log(pdf_path, page_num + 1, receipt_num + 1,
+                                            f"Orientation detection failed: {e}, falling back to default orientation"))
+                # Fallback to simple OCR
+                text = extract_text_simple(image, config)
+                metadata.update({
+                    'best_angle': 0,
+                    'confidence_scores': {'0°': 0},
+                    'best_confidence': 0
+                })
         else:
             text = extract_text_simple(image, config)
             metadata.update({

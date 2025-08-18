@@ -128,31 +128,63 @@ def rasterize_page_pdf2image(pdf_path: Path, page_num: int, dpi: int = 200) -> O
     """Rasterize a PDF page using pdf2image (requires Poppler)."""
     logger = get_logger()
     
+    # Check if pdf2image is available
+    try:
+        import pdf2image
+    except ImportError:
+        logger.warn(format_pdf_log(str(pdf_path), page_num + 1, "pdf2image not available for raster fallback"))
+        return None
+        
+    # Check if Poppler is available by attempting a conversion with timeout
     try:
         from pdf2image import convert_from_path
+        import threading
+        import time
         
-        # Convert single page
-        images = convert_from_path(
-            pdf_path,
-            dpi=dpi,
-            first_page=page_num + 1,
-            last_page=page_num + 1
-        )
+        # Define a function to attempt conversion
+        def attempt_conversion():
+            nonlocal result
+            try:
+                result = convert_from_path(
+                    pdf_path,
+                    dpi=dpi,
+                    first_page=page_num + 1,
+                    last_page=page_num + 1
+                )
+            except Exception as e:
+                logger.warn(format_pdf_log(str(pdf_path), page_num + 1, f"pdf2image conversion failed: {e}"))
+                result = None
         
-        if images:
-            image = images[0]
+        # Try conversion with timeout
+        result = None
+        conversion_thread = threading.Thread(target=attempt_conversion)
+        conversion_thread.daemon = True
+        conversion_thread.start()
+        
+        # Wait up to 15 seconds
+        conversion_thread.join(timeout=15)
+        
+        if conversion_thread.is_alive():
+            logger.warn(format_pdf_log(str(pdf_path), page_num + 1, "pdf2image conversion timed out after 15 seconds"))
+            return None
+            
+        if not result:
+            return None
+            
+        if result:
+            image = result[0]
             logger.info(format_pdf_log(str(pdf_path), page_num + 1, 
                                      f"rasterized page with pdf2image at {dpi} DPI ({image.size[0]}x{image.size[1]})"))
             return image
         else:
-            logger.fail(format_pdf_log(str(pdf_path), page_num + 1, "pdf2image returned no images"))
+            logger.warn(format_pdf_log(str(pdf_path), page_num + 1, "pdf2image returned no images"))
             return None
             
     except ImportError:
-        logger.warn(format_pdf_log(str(pdf_path), page_num + 1, "pdf2image not available"))
+        logger.warn(format_pdf_log(str(pdf_path), page_num + 1, "Poppler not available for pdf2image fallback"))
         return None
     except Exception as e:
-        logger.fail(format_pdf_log(str(pdf_path), page_num + 1, f"pdf2image rasterization failed: {e}"))
+        logger.warn(format_pdf_log(str(pdf_path), page_num + 1, f"pdf2image rasterization failed: {e}"))
         return None
 
 
@@ -161,23 +193,32 @@ def get_page_images(pdf_path: Path, page_num: int, dpi: int = 200) -> List[Image
     logger = get_logger()
     
     # Try embedded images first
-    images = extract_embedded_images(pdf_path, page_num)
-    if images:
-        return images
+    try:
+        images = extract_embedded_images(pdf_path, page_num)
+        if images:
+            return images
+    except Exception as e:
+        logger.warn(format_pdf_log(str(pdf_path), page_num + 1, f"error extracting embedded images: {e}"))
     
     # Fallback to rasterization
     logger.info(format_pdf_log(str(pdf_path), page_num + 1, "no embedded images, trying rasterization"))
     
     # Try PyMuPDF rasterization first
-    raster_image = rasterize_page_pymupdf(pdf_path, page_num, dpi)
-    if raster_image:
-        return [raster_image]
+    try:
+        raster_image = rasterize_page_pymupdf(pdf_path, page_num, dpi)
+        if raster_image:
+            return [raster_image]
+    except Exception as e:
+        logger.warn(format_pdf_log(str(pdf_path), page_num + 1, f"PyMuPDF rasterization error: {e}"))
     
     # Try pdf2image as fallback
     logger.info(format_pdf_log(str(pdf_path), page_num + 1, "PyMuPDF rasterization failed, trying pdf2image"))
-    raster_image = rasterize_page_pdf2image(pdf_path, page_num, dpi)
-    if raster_image:
-        return [raster_image]
+    try:
+        raster_image = rasterize_page_pdf2image(pdf_path, page_num, dpi)
+        if raster_image:
+            return [raster_image]
+    except Exception as e:
+        logger.warn(format_pdf_log(str(pdf_path), page_num + 1, f"pdf2image rasterization error: {e}"))
     
     # Complete failure
     logger.fail(format_pdf_log(str(pdf_path), page_num + 1, "no receipts detected"))

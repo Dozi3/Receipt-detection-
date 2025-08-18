@@ -232,30 +232,56 @@ Built with Python, PyMuPDF, Tesseract OCR, OpenCV, and Tkinter."""
             from ..core.processing import process_pdf_files
             from ..core.pdf_io import find_pdf_files
             
-            # Update config from GUI
+            # Update config from GUI before starting processing
             self.update_config_from_gui()
             
             # Find PDF files
             pdf_files = find_pdf_files(input_dir)
             if not pdf_files:
-                get_logger().warn(f"No PDF files found in {input_dir}")
+                self.root.after(0, lambda: get_logger().warn(f"No PDF files found in {input_dir}"))
+                self.root.after(0, lambda: messagebox.showwarning("No PDFs", f"No PDF files found in {input_dir}"))
+                self.root.after(0, lambda: self.set_processing_state(False))
                 return
             
-            # Process files
-            total_receipts = process_pdf_files(pdf_files, output_dir, self.config, self.vendor_map)
+            # Set initial status
+            self.root.after(0, lambda: self.status_var.set(f"Processing {len(pdf_files)} PDF files..."))
             
-            # Show completion message
+            # Process files with exception handling for each file
+            total_receipts = 0
+            success_count = 0
+            
+            for i, pdf_path in enumerate(pdf_files):
+                try:
+                    # Update status on main thread
+                    self.root.after(0, lambda i=i, total=len(pdf_files), 
+                                    path=pdf_path: self.status_var.set(
+                                    f"Processing file {i+1}/{total}: {path.name}"))
+                    
+                    # Process file
+                    receipt_count = process_pdf_files([pdf_path], output_dir, self.config, self.vendor_map)
+                    
+                    if receipt_count > 0:
+                        success_count += 1
+                        total_receipts += receipt_count
+                except Exception as e:
+                    # Log error but continue with next file
+                    self.root.after(0, lambda pdf=pdf_path, err=e: get_logger().fail(
+                        f"Failed to process {pdf.name}: {err}"))
+            
+            # Show completion message on main thread
             self.root.after(0, lambda: messagebox.showinfo(
                 "Processing Complete", 
-                f"Processing completed successfully!\n\n"
-                f"Total receipts processed: {total_receipts}\n"
+                f"Processing completed!\n\n"
+                f"Files processed: {success_count}/{len(pdf_files)}\n"
+                f"Total receipts: {total_receipts}\n"
                 f"Output saved to: {output_dir}"
             ))
         
         except Exception as e:
-            self.root.after(0, lambda: messagebox.showerror(
+            # Show error on main thread
+            self.root.after(0, lambda err=e: messagebox.showerror(
                 "Processing Error", 
-                f"An error occurred during processing:\n\n{e}"
+                f"An error occurred during processing:\n\n{err}"
             ))
         
         finally:

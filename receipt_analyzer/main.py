@@ -77,7 +77,13 @@ def run_cli(argv: List[str]) -> int:
         return main(argv)
     
     except ImportError as e:
-        print(f"Error: CLI components not available: {e}")
+        print(f"Error: Required dependencies not available: {e}")
+        print()
+        print("Please install the required dependencies:")
+        print("  pip install -r requirements.txt")
+        print()
+        print("For PyMuPDF (fitz): pip install PyMuPDF")
+        print("For Tesseract: Install Tesseract OCR binary from tesseract-ocr.github.io")
         return 1
     
     except Exception as e:

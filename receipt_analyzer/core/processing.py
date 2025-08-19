@@ -43,38 +43,46 @@ def save_image(image: Image.Image, output_path: Path, config: Config) -> bool:
         if image is None:
             logger.warn(f"Cannot save None image to {output_path}")
             return False
-            
         # Check image dimensions
         width, height = image.size
         if width <= 0 or height <= 0:
             logger.warn(f"Cannot save zero-dimension image ({width}x{height}) to {output_path}")
             return False
-        
         # Ensure output directory exists
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        
         # Resize if needed
         image = resize_image_for_output(image, config.output.max_edge)
-        
-        # Save in specified format
-        if config.output.format.lower() == 'jpeg':
-            # Convert to RGB if needed (JPEG doesn't support RGBA)
-            if image.mode in ('RGBA', 'LA', 'P'):
-                rgb_image = Image.new('RGB', image.size, (255, 255, 255))
-                if image.mode == 'P':
-                    image = image.convert('RGBA')
-                rgb_image.paste(image, mask=image.split()[-1] if 'A' in image.mode else None)
-                image = rgb_image
-            
-            image.save(output_path, 'JPEG', quality=config.output.jpeg_quality, optimize=True)
+        # Determine format from extension if possible
+        ext = output_path.suffix.lower()
+        fmt = None
+        if ext in ('.jpg', '.jpeg'):
+            fmt = 'JPEG'
+        elif ext == '.png':
+            fmt = 'PNG'
+        elif ext == '.tif' or ext == '.tiff':
+            fmt = 'TIFF'
         else:
-            # Default to PNG
-            image.save(output_path, 'PNG', optimize=True)
-        
+            fmt = config.output.format.upper() if hasattr(config.output, 'format') else 'PNG'
+        # Convert to appropriate mode
+        if fmt == 'JPEG':
+            if image.mode not in ('RGB', 'L'):
+                image = image.convert('RGB')
+        elif fmt == 'PNG':
+            if image.mode not in ('RGB', 'RGBA', 'L'):
+                image = image.convert('RGBA')
+        # Save with appropriate options
+        if fmt == 'JPEG':
+            image.save(output_path, fmt, quality=getattr(config.output, 'jpeg_quality', 90), optimize=True)
+        elif fmt == 'PNG':
+            image.save(output_path, fmt, optimize=True)
+        elif fmt == 'TIFF':
+            image.save(output_path, fmt)
+        else:
+            image.save(output_path)
+        logger.debug(f"Saved image to {output_path} as {fmt}")
         return True
-    
     except Exception as e:
-        logger.fail(f"Failed to save image to {output_path}: {e}")
+        logger.warn(f"Failed to save image to {output_path}: {e}")
         return False
 
 
@@ -171,105 +179,111 @@ def process_pdf_page(pdf_path: Path, page_num: int, config: Config,
     logger = get_logger()
     records = []
     
-    # Get images from PDF page
-    images = get_page_images(pdf_path, page_num)
-    if not images:
-        return records
-    
-    # Detect receipts using configured method
-    if config.detection_method == 'simple':
-        receipt_images = detect_receipts_simple(images, str(pdf_path), page_num)
-    else:  # opencv
-        receipt_images = detect_receipts_opencv(images, str(pdf_path), page_num, config.opencv)
-    
-    if not receipt_images:
-        return records
-    
-    # Create page output directory
-    page_dir = output_dir / f"page_{page_num + 1}"
-    page_dir.mkdir(exist_ok=True)
-    
-    # Process each detected receipt
-    page_receipts = []
-    for receipt_num, receipt_image in enumerate(receipt_images):
-        try:
-            # Process receipt (OCR + parsing)
-            result = process_receipt(
-                receipt_image, config, vendor_map, str(pdf_path), page_num, receipt_num
-            )
-            
-            if result is None:
-                log_warn(format_pdf_log(str(pdf_path), page_num + 1, 
-                                      f"receipt {receipt_num + 1}: processing failed"))
-                continue
-            
-            parsed_receipt, ocr_metadata = result
-            
-            # Generate filename
-            file_extension = config.output.format
-            filename = build_receipt_filename(parsed_receipt, file_extension)
-            
-            # Ensure unique filename
-            output_path = unique_path(page_dir / filename)
-            final_filename = output_path.name
-            
-            # Save image
-            if save_image(receipt_image, output_path, config):
-                log_success(format_pdf_log(str(pdf_path), page_num + 1, 
-                                         f"receipt {receipt_num + 1} -> {page_dir.name}/{final_filename}"))
-                
-                # Create receipt record
-                record = ReceiptRecord(
-                    pdf_name=pdf_path.name,
-                    page_num=page_num,
-                    receipt_num=receipt_num,
-                    receipt=parsed_receipt,
-                    filename=f"{page_dir.name}/{final_filename}"
+    try:
+        # Get images from PDF page
+        images = get_page_images(pdf_path, page_num)
+        if not images:
+            logger.warn(format_pdf_log(str(pdf_path), page_num + 1, "no images extracted from page"))
+            return records
+        
+        # Detect receipts using configured method
+        if config.detection_method == 'simple':
+            receipt_images = detect_receipts_simple(images, str(pdf_path), page_num)
+        else:  # opencv
+            receipt_images = detect_receipts_opencv(images, str(pdf_path), page_num, config.opencv)
+        
+        if not receipt_images:
+            logger.warn(format_pdf_log(str(pdf_path), page_num + 1, "no receipt images detected"))
+            return records
+        
+        # Create page output directory
+        page_dir = output_dir / f"page_{page_num + 1}"
+        page_dir.mkdir(exist_ok=True)
+        
+        # Process each detected receipt
+        page_receipts = []
+        for receipt_num, receipt_image in enumerate(receipt_images):
+            try:
+                # Process receipt (OCR + parsing)
+                result = process_receipt(
+                    receipt_image, config, vendor_map, str(pdf_path), page_num, receipt_num
                 )
                 
-                records.append(record)
-                page_receipts.append((final_filename, receipt_image))
-                
-                # Check for missing data and warn
-                missing = []
-                if not parsed_receipt.vendor:
-                    missing.append("vendor")
-                if not parsed_receipt.amount:
-                    missing.append("amount")
-                if not parsed_receipt.date:
-                    missing.append("date")
-                
-                if missing:
-                    preview = parsed_receipt.raw_text.replace('\n', ' ').strip()[:120]
+                if result is None:
                     log_warn(format_pdf_log(str(pdf_path), page_num + 1, 
-                                          f"receipt {receipt_num + 1}: missing {', '.join(missing)} | {preview}"))
+                                          f"receipt {receipt_num + 1}: processing failed"))
+                    continue
+                
+                parsed_receipt, ocr_metadata = result
+                
+                # Generate filename
+                file_extension = config.output.format
+                filename = build_receipt_filename(parsed_receipt, file_extension)
+                
+                # Ensure unique filename
+                output_path = unique_path(page_dir / filename)
+                final_filename = output_path.name
+                
+                # Save image
+                if save_image(receipt_image, output_path, config):
+                    log_success(format_pdf_log(str(pdf_path), page_num + 1, 
+                                             f"receipt {receipt_num + 1} -> {page_dir.name}/{final_filename}"))
+                    
+                    # Create receipt record
+                    record = ReceiptRecord(
+                        pdf_name=pdf_path.name,
+                        page_num=page_num,
+                        receipt_num=receipt_num,
+                        receipt=parsed_receipt,
+                        filename=f"{page_dir.name}/{final_filename}"
+                    )
+                    
+                    records.append(record)
+                    page_receipts.append((final_filename, receipt_image))
+                    
+                    # Check for missing data and warn
+                    missing = []
+                    if not parsed_receipt.vendor:
+                        missing.append("vendor")
+                    if not parsed_receipt.amount:
+                        missing.append("amount")
+                    if not parsed_receipt.date:
+                        missing.append("date")
+                    
+                    if missing:
+                        preview = parsed_receipt.raw_text.replace('\n', ' ').strip()[:120]
+                        log_warn(format_pdf_log(str(pdf_path), page_num + 1, 
+                                              f"receipt {receipt_num + 1}: missing {', '.join(missing)} | {preview}"))
+                
+                else:
+                    log_fail(format_pdf_log(str(pdf_path), page_num + 1, 
+                                          f"receipt {receipt_num + 1}: failed to save image"))
             
-            else:
+            except Exception as e:
                 log_fail(format_pdf_log(str(pdf_path), page_num + 1, 
-                                      f"receipt {receipt_num + 1}: failed to save image"))
+                                      f"receipt {receipt_num + 1}: processing error: {e}"))
         
-        except Exception as e:
-            log_fail(format_pdf_log(str(pdf_path), page_num + 1, 
-                                  f"receipt {receipt_num + 1}: processing error: {e}"))
-    
-    # Create per-page ZIP if requested and receipts were saved
-    if config.output.per_page_zip and page_receipts:
-        zip_filename = build_page_zip_filename(pdf_path.stem, page_num)
-        zip_path = output_dir / zip_filename
-        
-        try:
-            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-                for filename, _ in page_receipts:
-                    file_path = page_dir / filename
-                    zf.write(file_path, filename)
+        # Create per-page ZIP if requested and receipts were saved
+        if config.output.per_page_zip and page_receipts:
+            zip_filename = build_page_zip_filename(pdf_path.stem, page_num)
+            zip_path = output_dir / zip_filename
             
-            logger.info(format_pdf_log(str(pdf_path), page_num + 1, 
-                                     f"created ZIP archive: {zip_filename}"))
-        
-        except Exception as e:
-            log_warn(format_pdf_log(str(pdf_path), page_num + 1, 
-                                  f"failed to create ZIP archive: {e}"))
+            try:
+                with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                    for filename, _ in page_receipts:
+                        file_path = page_dir / filename
+                        zf.write(file_path, filename)
+                
+                logger.info(format_pdf_log(str(pdf_path), page_num + 1, 
+                                         f"created ZIP archive: {zip_filename}"))
+            
+            except Exception as e:
+                log_warn(format_pdf_log(str(pdf_path), page_num + 1, 
+                                      f"failed to create ZIP archive: {e}"))
     
+    except Exception as e:
+        log_fail(format_pdf_log(str(pdf_path), page_num + 1, f"page processing failed: {e}"))
+        
     return records
 
 

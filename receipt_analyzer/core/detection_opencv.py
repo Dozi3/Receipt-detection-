@@ -328,7 +328,8 @@ def detect_receipts_opencv(images: List[Image.Image], pdf_path: str, page_num: i
     try:
         cv_image = pil_to_cv2(main_image)
     except Exception as e:
-        logger.fail(format_pdf_log(pdf_path, page_num + 1, f"failed to convert image to OpenCV format: {e}"))
+        logger.warn(format_pdf_log(pdf_path, page_num + 1, f"failed to convert image to OpenCV format: {e}"))
+        logger.info(format_pdf_log(pdf_path, page_num + 1, "1 receipts detected (method=opencv-fallback)"))
         return [main_image]  # Return original image as fallback
     
     logger.info(format_pdf_log(pdf_path, page_num + 1, 
@@ -345,7 +346,7 @@ def detect_receipts_opencv(images: List[Image.Image], pdf_path: str, page_num: i
         
         if not quads:
             logger.info(format_pdf_log(pdf_path, page_num + 1, "no receipt contours found, using whole page"))
-            logger.info(format_pdf_log(pdf_path, page_num + 1, "1 receipts detected (method=opencv)"))
+            logger.info(format_pdf_log(pdf_path, page_num + 1, "1 receipts detected (method=opencv-whole-page)"))
             return [main_image]
         
         # Remove overlapping quads
@@ -382,4 +383,5 @@ def detect_receipts_opencv(images: List[Image.Image], pdf_path: str, page_num: i
         
     except Exception as e:
         logger.warn(format_pdf_log(pdf_path, page_num + 1, f"opencv detection failed: {e}, using whole page"))
+        logger.info(format_pdf_log(pdf_path, page_num + 1, "1 receipts detected (method=opencv-error-fallback)"))
         return [main_image]  # Return original image as fallback

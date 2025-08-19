@@ -72,9 +72,14 @@ def extract_embedded_images(pdf_path: Path, page_num: int) -> List[Image.Image]:
                     img_data = pix.tobytes("ppm")
                     pil_image = Image.open(io.BytesIO(img_data))
                 
-                images.append(pil_image)
-                logger.info(format_pdf_log(str(pdf_path), page_num + 1, 
-                                         f"extracted embedded image {img_index + 1} ({pil_image.size[0]}x{pil_image.size[1]})"))
+                # Check if image is valid and has reasonable dimensions
+                if pil_image.size[0] > 10 and pil_image.size[1] > 10:
+                    images.append(pil_image)
+                    logger.info(format_pdf_log(str(pdf_path), page_num + 1, 
+                                             f"extracted embedded image {img_index + 1} ({pil_image.size[0]}x{pil_image.size[1]})"))
+                else:
+                    logger.warn(format_pdf_log(str(pdf_path), page_num + 1, 
+                                             f"skipping embedded image {img_index + 1}: too small ({pil_image.size[0]}x{pil_image.size[1]})"))
                 
                 pix = None  # Free memory
                 

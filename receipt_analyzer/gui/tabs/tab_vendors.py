@@ -4,7 +4,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from pathlib import Path
 
-from ...gui.utils import run_with_busy_indicator
+from ..utils import run_with_busy_indicator
 
 
 class VendorsTab:

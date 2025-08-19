@@ -278,24 +278,31 @@ Built with Python, PyMuPDF, Tesseract OCR, OpenCV, and Tkinter."""
     
     def set_processing_state(self, is_processing: bool):
         """Update the processing state and UI."""
-        self.is_processing = is_processing
-        
-        # Update status
-        if is_processing:
-            self.status_var.set("Processing...")
-        else:
-            self.status_var.set("Ready")
+        try:
+            self.is_processing = is_processing
             
-            # Reset cursor
-            self.root.config(cursor="")
+            # Update status
+            if is_processing:
+                self.status_var.set("Processing...")
+            else:
+                self.status_var.set("Ready")
+                
+                # Reset cursor
+                self.root.config(cursor="")
+                for tab in self.tabs.values():
+                    if hasattr(tab, 'frame'):
+                        tab.frame.config(cursor="")
+            
+            # Update tabs
             for tab in self.tabs.values():
-                if hasattr(tab, 'frame'):
-                    tab.frame.config(cursor="")
-        
-        # Update tabs
-        for tab in self.tabs.values():
-            if hasattr(tab, 'set_processing_state'):
-                tab.set_processing_state(is_processing)
+                if hasattr(tab, 'set_processing_state'):
+                    tab.set_processing_state(is_processing)
+                    
+        except Exception as e:
+            # If state setting fails, log but don't crash
+            get_logger().warn(f"Error setting processing state: {e}")
+            # Ensure we at least set the basic state
+            self.is_processing = is_processing
     
     def start_processing(self, input_dir: Path, output_dir: Path):
         """Start processing in a separate thread."""
@@ -333,12 +340,17 @@ Built with Python, PyMuPDF, Tesseract OCR, OpenCV, and Tkinter."""
         )
         self.processing_thread.start()
         
-        # Show processing status dialog
-        self.processing_dialog = ProcessingStatusDialog(self.root, self)
-        self.processing_dialog.show()
-        
-        # Update processing dialog
-        self.root.after(1000, self.check_processing_status)
+        # Show processing status dialog (with error handling)
+        try:
+            self.processing_dialog = ProcessingStatusDialog(self.root, self)
+            self.processing_dialog.show()
+            
+            # Update processing dialog
+            self.root.after(1000, self.check_processing_status)
+        except Exception as e:
+            # If dialog fails, continue without it but log the error
+            get_logger().warn(f"Failed to create processing dialog: {e}")
+            self.processing_dialog = None
     
     def stop_processing(self):
         """Stop the current processing."""
@@ -363,16 +375,21 @@ Built with Python, PyMuPDF, Tesseract OCR, OpenCV, and Tkinter."""
         """Check if processing is still running and update UI accordingly."""
         if not self.is_processing:
             return
-            
-        # Check if the thread is still alive
-        if self.processing_thread and self.processing_thread.is_alive():
-            # Schedule another check
-            self.root.after(500, self.check_processing_status)
-        else:
-            # Processing has finished or been cancelled
+        
+        try:
+            # Check if the thread is still alive
+            if self.processing_thread and self.processing_thread.is_alive():
+                # Schedule another check
+                self.root.after(500, self.check_processing_status)
+            else:
+                # Processing has finished or been cancelled
+                self.root.after(0, lambda: self.set_processing_state(False))
+                
+                # Restore normal cursor
+        except Exception as e:
+            # If status checking fails, try to clean up gracefully
+            get_logger().warn(f"Error in processing status check: {e}")
             self.root.after(0, lambda: self.set_processing_state(False))
-            
-            # Restore normal cursor
             self.root.config(cursor="")
             for tab in self.tabs.values():
                 if hasattr(tab, 'frame'):

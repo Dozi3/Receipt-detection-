@@ -27,8 +27,16 @@ class OCRConfig:
     """OCR processing parameters."""
     language: str = "eng"
     max_edge_px: int = 1000
+    max_edge: int = 1000  # Alias for backward compatibility
     psm: int = 6
     oem: int = 3
+
+    def __post_init__(self):
+        # Ensure max_edge and max_edge_px are in sync
+        if not hasattr(self, "max_edge"):
+            self.max_edge = self.max_edge_px
+        elif not hasattr(self, "max_edge_px"):
+            self.max_edge_px = self.max_edge
 
 
 @dataclass

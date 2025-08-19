@@ -18,7 +18,7 @@ import fitz  # PyMuPDF
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import the necessary modules from receipt_analyzer
-from receipt_analyzer.core.config import Config
+from receipt_analyzer.core.config import Config, OCRConfig
 from receipt_analyzer.core.pdf_io import extract_embedded_images, rasterize_page_pymupdf, rasterize_page_pdf2image, get_page_images
 from receipt_analyzer.core.detection_opencv import detect_receipts_opencv, pil_to_cv2, cv2_to_pil, check_opencv_available
 from receipt_analyzer.core.detection_simple import detect_receipts_simple
@@ -58,9 +58,9 @@ def get_config(args):
     config.output.max_edge = 1800
     config.output.per_page_zip = False
     # OCR settings
-    config.ocr = Config()
-    config.ocr.lang = 'eng'
-    config.ocr.config = '--psm 4'
+    config.ocr = OCRConfig()
+    config.ocr.language = 'eng'
+    config.ocr.psm = 4
     return config
 
 def test_pdf_extraction(pdf_path, page_num=0, output_dir=None, save_images=False):
@@ -228,38 +228,37 @@ def test_ocr(receipt_images, pdf_path, page_num=0, config=None, output_dir=None)
     
     for i, receipt in enumerate(receipt_images):
         try:
-            logger.info(f"OCR on receipt {i+1}...")
+            log_info(f"OCR on receipt {i+1}...")
             text, metadata = perform_ocr(receipt, config.ocr, str(pdf_path), page_num, i, auto_orient=True)
             
             if not text:
-                logger.warning(f"No text extracted from receipt {i+1}")
+                log_warn(f"No text extracted from receipt {i+1}")
                 continue
             
-            logger.info(f"Successfully extracted {len(text)} characters from receipt {i+1}")
+            log_info(f"Successfully extracted {len(text)} characters from receipt {i+1}")
             
             # Save the OCR text
             if output_dir:
                 text_path = output_dir / f"page_{page_num+1}_receipt_{i+1}_ocr.txt"
                 with open(text_path, 'w', encoding='utf-8') as f:
                     f.write(text)
-                logger.info(f"Saved OCR text to {text_path}")
+                log_info(f"Saved OCR text to {text_path}")
             
             # Print a preview of the text
             preview = text.replace('\n', ' ').strip()[:200]
-            logger.info(f"Text preview: {preview}...")
+            log_info(f"Text preview: {preview}...")
             
             results.append((text, metadata))
             
         except Exception as e:
-            logger.error(f"OCR failed for receipt {i+1}: {e}")
-            logger.debug(f"OCR error details: {traceback.format_exc()}")
+            log_fail(f"OCR failed for receipt {i+1}: {e}")
+            log_debug(f"OCR error details: {traceback.format_exc()}")
     
     return results
 
 def test_full_processing(pdf_path, page_num=0, config=None, output_dir=None):
     """Test the full processing pipeline on a PDF page."""
-    logger = get_logger()
-    logger.info(f"Testing full processing pipeline for {pdf_path}, page {page_num+1}")
+    log_info(f"Testing full processing pipeline for {pdf_path}, page {page_num+1}")
     
     try:
         # Create a default config if none provided
@@ -277,51 +276,50 @@ def test_full_processing(pdf_path, page_num=0, config=None, output_dir=None):
             output_dir.mkdir(exist_ok=True)
         
         # Process the PDF page
-        logger.info("Running process_pdf_page...")
+        log_info("Running process_pdf_page...")
         records = process_pdf_page(Path(pdf_path), page_num, config, vendor_map, output_dir)
         
-        logger.info(f"Processed {len(records)} receipts")
+        log_info(f"Processed {len(records)} receipts")
         
         # Print details of each record
         for i, record in enumerate(records):
-            logger.info(f"Receipt {i+1}: Vendor={record.receipt.vendor}, "
+            log_info(f"Receipt {i+1}: Vendor={record.receipt.vendor}, "
                       f"Amount={record.receipt.amount}, Date={record.receipt.date}")
         
         return records
     except Exception as e:
-        logger.error(f"Error in full processing: {e}")
-        logger.debug(f"Processing error details: {traceback.format_exc()}")
+        log_fail(f"Error in full processing: {e}")
+        log_debug(f"Processing error details: {traceback.format_exc()}")
         return []
 
 def inspect_pdf_structure(pdf_path):
     """Inspect the structure of a PDF file."""
-    logger = get_logger()
-    logger.info(f"Inspecting PDF structure for {pdf_path}")
+    log_info(f"Inspecting PDF structure for {pdf_path}")
     
     try:
         doc = fitz.open(pdf_path)
-        logger.info(f"PDF has {len(doc)} pages")
+        log_info(f"PDF has {len(doc)} pages")
         
         for page_num in range(len(doc)):
             page = doc[page_num]
-            logger.info(f"Page {page_num+1}: {page.rect.width}x{page.rect.height} points")
+            log_info(f"Page {page_num+1}: {page.rect.width}x{page.rect.height} points")
             
             # Get page rotation
-            logger.info(f"Page rotation: {page.rotation}")
+            log_info(f"Page rotation: {page.rotation}")
             
             # Check for images
             image_list = page.get_images()
-            logger.info(f"Page has {len(image_list)} embedded images")
+            log_info(f"Page has {len(image_list)} embedded images")
             
             # Check for text
             text = page.get_text()
             text_preview = text[:100] + "..." if len(text) > 100 else text
-            logger.info(f"Page text preview: {text_preview}")
+            log_info(f"Page text preview: {text_preview}")
             
         doc.close()
     except Exception as e:
-        logger.error(f"Error inspecting PDF: {e}")
-        logger.debug(f"Inspection error details: {traceback.format_exc()}")
+        log_fail(f"Error inspecting PDF: {e}")
+        log_debug(f"Inspection error details: {traceback.format_exc()}")
 
 def check_dependencies():
     """Check if all required dependencies are available."""
@@ -353,22 +351,21 @@ def main():
     # Configure logging based on arguments
     log_level = logging.DEBUG if args.debug else (logging.WARNING if args.quiet else logging.INFO)
     configure_logging(level=log_level)
-    logger = get_logger()
     
     # Create timestamp for output directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = Path(f"diagnostic_output_{timestamp}")
     output_dir.mkdir(exist_ok=True)
     
-    logger.info("=" * 50)
-    logger.info(f"Running diagnostics on {args.pdf_file}")
-    logger.info(f"Output directory: {output_dir}")
-    logger.info("=" * 50)
+    log_info("=" * 50)
+    log_info(f"Running diagnostics on {args.pdf_file}")
+    log_info(f"Output directory: {output_dir}")
+    log_info("=" * 50)
     
     # Check that PDF exists
     pdf_path = args.pdf_file
     if not Path(pdf_path).exists():
-        logger.error(f"PDF file not found: {pdf_path}")
+        log_fail(f"PDF file not found: {pdf_path}")
         return 1
     
     # Check dependencies
@@ -390,21 +387,21 @@ def main():
             if 1 <= args.page <= page_count:
                 pages = [args.page - 1]  # Convert to 0-based
             else:
-                logger.error(f"Invalid page number {args.page}, PDF has {page_count} pages")
+                log_fail(f"Invalid page number {args.page}, PDF has {page_count} pages")
                 return 1
         else:
             pages = range(page_count)
     except Exception as e:
-        logger.error(f"Error determining page count: {e}")
-        logger.debug(f"Page count error details: {traceback.format_exc()}")
+        log_fail(f"Error determining page count: {e}")
+        log_debug(f"Page count error details: {traceback.format_exc()}")
         # Default to just first page if can't determine
         pages = [0]
     
     # Process each page
     for page_num in pages:
-        logger.info("\n" + "=" * 50)
-        logger.info(f"Processing page {page_num+1}")
-        logger.info("=" * 50)
+        log_info("\n" + "=" * 50)
+        log_info(f"Processing page {page_num+1}")
+        log_info("=" * 50)
         
         # Extract images
         images = test_pdf_extraction(pdf_path, page_num, output_dir, args.save_images)
@@ -420,10 +417,10 @@ def main():
         # Test full processing pipeline
         test_full_processing(pdf_path, page_num, config, output_dir)
     
-    logger.info("\n" + "=" * 50)
-    logger.info("Diagnostics complete")
-    logger.info(f"Results saved to {output_dir}")
-    logger.info("=" * 50)
+    log_info("\n" + "=" * 50)
+    log_info("Diagnostics complete")
+    log_info(f"Results saved to {output_dir}")
+    log_info("=" * 50)
     
     return 0
 

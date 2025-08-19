@@ -108,11 +108,14 @@ def preprocess_image(image: np.ndarray, config: OpenCVConfig) -> np.ndarray:
     # Apply Gaussian blur
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
     
-    # Apply Canny edge detection
-    edges = cv2.Canny(blurred, config.canny1, config.canny2)
+    # Apply Canny edge detection with default values if not specified
+    canny1 = getattr(config, 'canny1', 50)
+    canny2 = getattr(config, 'canny2', 150)
+    edges = cv2.Canny(blurred, canny1, canny2)
     
     # Apply morphological closing to fill gaps
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (config.morph_close, config.morph_close))
+    morph_close = getattr(config, 'morph_close', 5)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (morph_close, morph_close))
     closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
     
     return closed
@@ -137,7 +140,9 @@ def find_receipt_contours(processed_image: np.ndarray, original_shape: Tuple[int
     for i, contour in enumerate(contours):
         try:
             # Approximate contour to polygon
-            epsilon = config.quad_epsilon * cv2.arcLength(contour, True)
+            # Use epsilon_factor or quad_epsilon based on what's available in config
+            epsilon_factor = getattr(config, 'quad_epsilon', getattr(config, 'epsilon_factor', 0.02))
+            epsilon = epsilon_factor * cv2.arcLength(contour, True)
             approx = cv2.approxPolyDP(contour, epsilon, True)
             
             # Only consider quadrilaterals
@@ -149,18 +154,26 @@ def find_receipt_contours(processed_image: np.ndarray, original_shape: Tuple[int
             area = cv2.contourArea(contour)
             area_ratio = area / image_area
             
+            # Get area ratio thresholds with defaults
+            min_area_ratio = getattr(config, 'min_area_ratio', 0.01)
+            max_area_ratio = getattr(config, 'max_area_ratio', 0.95)
+            
             # Filter by area
-            if area_ratio < config.min_area_ratio or area_ratio > config.max_area_ratio:
-                log_debug(f"Contour {i}: Skipping quad with area ratio {area_ratio:.4f} outside range [{config.min_area_ratio}, {config.max_area_ratio}]")
+            if area_ratio < min_area_ratio or area_ratio > max_area_ratio:
+                log_debug(f"Contour {i}: Skipping quad with area ratio {area_ratio:.4f} outside range [{min_area_ratio}, {max_area_ratio}]")
                 continue
             
             # Calculate bounding rectangle for aspect ratio
             x, y, w, h = cv2.boundingRect(contour)
             aspect_ratio = w / h if h > 0 else 0
             
+            # Get aspect ratio thresholds with defaults
+            min_aspect = getattr(config, 'min_aspect', 0.2)
+            max_aspect = getattr(config, 'max_aspect', 5.0)
+            
             # Filter by aspect ratio
-            if aspect_ratio < config.min_aspect or aspect_ratio > config.max_aspect:
-                log_debug(f"Contour {i}: Skipping quad with aspect ratio {aspect_ratio:.2f} outside range [{config.min_aspect}, {config.max_aspect}]")
+            if aspect_ratio < min_aspect or aspect_ratio > max_aspect:
+                log_debug(f"Contour {i}: Skipping quad with aspect ratio {aspect_ratio:.2f} outside range [{min_aspect}, {max_aspect}]")
                 continue
             
             log_debug(f"Contour {i}: Keeping quad with area ratio {area_ratio:.4f}, aspect ratio {aspect_ratio:.2f}")
@@ -225,14 +238,16 @@ def apply_perspective_transform(image: np.ndarray, quad: np.ndarray,
             return None
         
         # Limit the size to warp_long_edge_px
+        warp_long_edge_px = getattr(config, 'warp_long_edge_px', 1600)
+        
         if width > height:
-            if width > config.warp_long_edge_px:
-                height = int(height * config.warp_long_edge_px / width)
-                width = config.warp_long_edge_px
+            if width > warp_long_edge_px:
+                height = int(height * warp_long_edge_px / width)
+                width = warp_long_edge_px
         else:
-            if height > config.warp_long_edge_px:
-                width = int(width * config.warp_long_edge_px / height)
-                height = config.warp_long_edge_px
+            if height > warp_long_edge_px:
+                width = int(width * warp_long_edge_px / height)
+                height = warp_long_edge_px
         
         # Double-check dimensions
         if width <= 0 or height <= 0:
@@ -261,9 +276,10 @@ def apply_perspective_transform(image: np.ndarray, quad: np.ndarray,
         log_debug(f"Warped dimensions: {warped.shape[1]}x{warped.shape[0]}")
         
         # Add padding
-        if config.pad_px > 0:
+        pad_px = getattr(config, 'pad_px', 6)
+        if pad_px > 0:
             warped = cv2.copyMakeBorder(
-                warped, config.pad_px, config.pad_px, config.pad_px, config.pad_px,
+                warped, pad_px, pad_px, pad_px, pad_px,
                 cv2.BORDER_CONSTANT, value=[255, 255, 255]
             )
         

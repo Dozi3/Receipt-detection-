@@ -1,0 +1,26 @@
+RECEIPT
+
+Office Supplies Inc.
+
+123 Main Street
+Anytown, USA 12345
+Tel: (555) 123-4567
+
+Date: 01/05/2023
+Receipt #: R-12345
+
+Paper, Letter Size, 500 sheets $12.99
+Pens, Black, 12 pack $8.99
+Stapler $3.01
+Subtotal: $24.99
+Tax: $0.00
+Total: $24.99
+
+Payment Method: Credit Card
+
+Card Number: XXXX-XXXX-XXXX-1234
+
+Thank You!
+
+Please keep this receipt
+for your records

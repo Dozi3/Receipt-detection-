@@ -124,7 +124,7 @@ def extract_text_with_orientation(image: Image.Image, config: OCRConfig) -> Tupl
         Tuple of (extracted_text, best_angle, confidence_scores)
     """
     # Resize image if needed
-    image = resize_image_for_ocr(image, config.max_edge_px)
+    image = resize_image_for_ocr(image, config.max_edge)
     
     # Find best orientation
     best_angle, confidences = find_best_orientation(image, config)
@@ -149,7 +149,7 @@ def extract_text_simple(image: Image.Image, config: OCRConfig) -> str:
         Extracted text
     """
     # Resize image if needed
-    image = resize_image_for_ocr(image, config.max_edge_px)
+    image = resize_image_for_ocr(image, config.max_edge)
     
     # Extract text
     custom_config = f'--psm {config.psm} --oem {config.oem} -l {config.language}'
@@ -170,7 +170,7 @@ def get_word_boxes(image: Image.Image, config: OCRConfig) -> List[Dict]:
         List of dictionaries containing word information
     """
     # Resize image if needed
-    image = resize_image_for_ocr(image, config.max_edge_px)
+    image = resize_image_for_ocr(image, config.max_edge)
     
     # Get detailed OCR data
     custom_config = f'--psm {config.psm} --oem {config.oem} -l {config.language}'

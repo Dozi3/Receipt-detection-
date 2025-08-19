@@ -264,7 +264,7 @@ def process_pdf_page(pdf_path: Path, page_num: int, config: Config,
         # Detect receipts using configured method
         receipt_images = []
         try:
-            if config.detection_method == 'simple':
+            if hasattr(config, 'detection_method') and config.detection_method == 'simple':
                 logger.debug(f"process_pdf_page: Using simple detection method")
                 receipt_images = detect_receipts_simple(images, str(pdf_path), page_num)
             else:  # opencv

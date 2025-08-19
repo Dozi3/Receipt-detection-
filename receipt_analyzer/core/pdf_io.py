@@ -45,50 +45,48 @@ def extract_embedded_images(pdf_path: Path, page_num: int) -> List[Image.Image]:
     images = []
     
     try:
-        doc = fitz.open(pdf_path)
-        
-        if page_num >= len(doc):
-            logger.fail(format_pdf_log(str(pdf_path), page_num + 1, "page number out of range"))
-            return []
-        
-        page = doc[page_num]
-        image_list = page.get_images()
-        
-        if not image_list:
-            logger.info(format_pdf_log(str(pdf_path), page_num + 1, "no embedded images found"))
-            return []
-        
-        for img_index, img in enumerate(image_list):
-            try:
-                # Get image data
-                xref = img[0]
-                pix = fitz.Pixmap(doc, xref)
-                
-                # Convert to PIL Image
-                if pix.n - pix.alpha < 4:  # GRAY or RGB
-                    img_data = pix.tobytes("ppm")
-                    pil_image = Image.open(io.BytesIO(img_data))
-                else:  # CMYK
-                    img_data = pix.tobytes("ppm")
-                    pil_image = Image.open(io.BytesIO(img_data))
-                
-                # Check if image is valid and has reasonable dimensions
-                if pil_image.size[0] > 10 and pil_image.size[1] > 10:
-                    images.append(pil_image)
-                    logger.info(format_pdf_log(str(pdf_path), page_num + 1, 
-                                             f"extracted embedded image {img_index + 1} ({pil_image.size[0]}x{pil_image.size[1]})"))
-                else:
-                    logger.warn(format_pdf_log(str(pdf_path), page_num + 1, 
-                                             f"skipping embedded image {img_index + 1}: too small ({pil_image.size[0]}x{pil_image.size[1]})"))
-                
-                pix = None  # Free memory
-                
-            except Exception as e:
-                logger.warn(format_pdf_log(str(pdf_path), page_num + 1, 
-                                         f"failed to extract embedded image {img_index + 1}: {e}"))
-        
-        doc.close()
-        
+        with fitz.open(pdf_path) as doc:
+
+            if page_num >= len(doc):
+                logger.fail(format_pdf_log(str(pdf_path), page_num + 1, "page number out of range"))
+                return []
+
+            page = doc[page_num]
+            image_list = page.get_images()
+
+            if not image_list:
+                logger.info(format_pdf_log(str(pdf_path), page_num + 1, "no embedded images found"))
+                return []
+
+            for img_index, img in enumerate(image_list):
+                try:
+                    # Get image data
+                    xref = img[0]
+                    pix = fitz.Pixmap(doc, xref)
+
+                    # Convert to PIL Image
+                    if pix.n - pix.alpha < 4:  # GRAY or RGB
+                        img_data = pix.tobytes("ppm")
+                        pil_image = Image.open(io.BytesIO(img_data))
+                    else:  # CMYK
+                        img_data = pix.tobytes("ppm")
+                        pil_image = Image.open(io.BytesIO(img_data))
+
+                    # Check if image is valid and has reasonable dimensions
+                    if pil_image.size[0] > 10 and pil_image.size[1] > 10:
+                        images.append(pil_image)
+                        logger.info(format_pdf_log(str(pdf_path), page_num + 1,
+                                                 f"extracted embedded image {img_index + 1} ({pil_image.size[0]}x{pil_image.size[1]})"))
+                    else:
+                        logger.warn(format_pdf_log(str(pdf_path), page_num + 1,
+                                                 f"skipping embedded image {img_index + 1}: too small ({pil_image.size[0]}x{pil_image.size[1]})"))
+
+                    pix = None  # Free memory
+
+                except Exception as e:
+                    logger.warn(format_pdf_log(str(pdf_path), page_num + 1,
+                                             f"failed to extract embedded image {img_index + 1}: {e}"))
+
     except Exception as e:
         logger.fail(format_pdf_log(str(pdf_path), page_num + 1, f"failed to extract embedded images: {e}"))
     
@@ -100,30 +98,29 @@ def rasterize_page_pymupdf(pdf_path: Path, page_num: int, dpi: int = 200) -> Opt
     logger = get_logger()
     
     try:
-        doc = fitz.open(pdf_path)
-        
-        if page_num >= len(doc):
-            logger.fail(format_pdf_log(str(pdf_path), page_num + 1, "page number out of range"))
-            return None
-        
-        page = doc[page_num]
-        
-        # Calculate zoom factor for desired DPI
-        mat = fitz.Matrix(dpi / 72.0, dpi / 72.0)
-        pix = page.get_pixmap(matrix=mat)
-        
-        # Convert to PIL Image
-        img_data = pix.tobytes("ppm")
-        pil_image = Image.open(io.BytesIO(img_data))
-        
-        logger.info(format_pdf_log(str(pdf_path), page_num + 1, 
-                                 f"rasterized page at {dpi} DPI ({pil_image.size[0]}x{pil_image.size[1]})"))
-        
-        pix = None  # Free memory
-        doc.close()
-        
-        return pil_image
-        
+        with fitz.open(pdf_path) as doc:
+
+            if page_num >= len(doc):
+                logger.fail(format_pdf_log(str(pdf_path), page_num + 1, "page number out of range"))
+                return None
+
+            page = doc[page_num]
+
+            # Calculate zoom factor for desired DPI
+            mat = fitz.Matrix(dpi / 72.0, dpi / 72.0)
+            pix = page.get_pixmap(matrix=mat)
+
+            # Convert to PIL Image
+            img_data = pix.tobytes("ppm")
+            pil_image = Image.open(io.BytesIO(img_data))
+
+            logger.info(format_pdf_log(str(pdf_path), page_num + 1,
+                                     f"rasterized page at {dpi} DPI ({pil_image.size[0]}x{pil_image.size[1]})"))
+
+            pix = None  # Free memory
+
+            return pil_image
+
     except Exception as e:
         logger.fail(format_pdf_log(str(pdf_path), page_num + 1, f"PyMuPDF rasterization failed: {e}"))
         return None

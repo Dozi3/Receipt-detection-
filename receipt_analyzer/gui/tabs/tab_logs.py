@@ -26,9 +26,9 @@ class LogsTab:
         # Set up log monitoring
         self.app.log_stream.add_listener(self.on_log_message)
         
-        # Add throttling for log messages
+                # Add throttling for log messages to prevent GUI overload
         self.last_log_update = 0
-        self.log_update_throttle = 0.2  # Only update GUI every 200ms
+        self.log_update_throttle = 0.5  # Only update GUI every 500ms for debug messages
         
         # Initial load
         self.refresh_display()

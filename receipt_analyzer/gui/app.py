@@ -33,6 +33,10 @@ class ReceiptAnalyzerApp:
         self.config = load_config()
         self.vendor_map = load_vendor_map()
         self.log_stream = LogStream()
+        
+        # Enable debug throttling to prevent GUI overload during processing
+        self.log_stream.enable_debug_throttle(True)
+        
         self.processing_thread: Optional[threading.Thread] = None
         self.is_processing = False
         self.cancel_processing = False

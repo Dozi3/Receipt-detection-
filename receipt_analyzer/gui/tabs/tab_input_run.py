@@ -127,7 +127,7 @@ class InputRunTab:
         
         # Add throttling for log messages
         self.last_log_update = 0
-        self.log_update_throttle = 0.1  # Only update GUI every 100ms
+        self.log_update_throttle = 0.5  # Only update GUI every 500ms for debug messages
         
         # Set default directories
         self.set_default_directories()

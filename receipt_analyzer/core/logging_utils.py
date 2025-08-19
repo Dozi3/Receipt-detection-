@@ -38,6 +38,14 @@ class LogStream:
         self.max_records = max_records
         self.lock = Lock()
         self.listeners = []
+        self.debug_throttle_enabled = False
+        self.last_debug_notify = 0
+        self.debug_throttle_interval = 0.25  # 250ms minimum between debug notifications
+    
+    def enable_debug_throttle(self, enabled: bool = True):
+        """Enable or disable debug message throttling for listeners."""
+        with self.lock:
+            self.debug_throttle_enabled = enabled
     
     def add_listener(self, callback):
         """Add a callback function to be called when new log records are added."""
@@ -58,12 +66,24 @@ class LogStream:
             if len(self.records) > self.max_records:
                 self.records = self.records[-self.max_records:]
             
-            # Notify listeners
-            for listener in self.listeners:
-                try:
-                    listener(record)
-                except Exception as e:
-                    print(f"Error in log listener: {e}", file=sys.stderr)
+            # Notify listeners with throttling for debug messages
+            should_notify = True
+            if (self.debug_throttle_enabled and 
+                record.level == LogLevel.DEBUG and 
+                self.listeners):
+                import time
+                current_time = time.time()
+                if current_time - self.last_debug_notify < self.debug_throttle_interval:
+                    should_notify = False
+                else:
+                    self.last_debug_notify = current_time
+            
+            if should_notify:
+                for listener in self.listeners:
+                    try:
+                        listener(record)
+                    except Exception as e:
+                        print(f"Error in log listener: {e}", file=sys.stderr)
     
     def get_records(self, level_filter: Optional[str] = None) -> List[LogRecord]:
         """Get all records, optionally filtered by level."""

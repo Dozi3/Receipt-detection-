@@ -4,6 +4,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from pathlib import Path
 
+from ...gui.utils import run_with_busy_indicator
+
 
 class VendorsTab:
     """Vendors management tab."""
@@ -182,17 +184,31 @@ class VendorsTab:
         )
         
         if filename:
-            try:
-                from ...core.vendors import load_vendor_map, merge_vendor_maps
-                
-                imported_map = load_vendor_map(Path(filename))
-                self.app.vendor_map = merge_vendor_maps(self.app.vendor_map, imported_map)
-                
-                self.refresh_vendor_list()
-                messagebox.showinfo("Success", f"Vendor mappings imported from {filename}")
+            from ...core.vendors import load_vendor_map, merge_vendor_maps
             
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to import vendor mappings:\n{e}")
+            def import_operation():
+                try:
+                    imported_map = load_vendor_map(Path(filename))
+                    merged_map = merge_vendor_maps(self.app.vendor_map, imported_map)
+                    return merged_map, None
+                except Exception as e:
+                    return None, e
+            
+            def done_callback(result, error):
+                if error:
+                    messagebox.showerror("Error", f"Failed to import vendor mappings:\n{error}")
+                else:
+                    self.app.vendor_map = result
+                    self.refresh_vendor_list()
+                    messagebox.showinfo("Success", f"Vendor mappings imported from {filename}")
+            
+            # Run the operation with a busy indicator
+            run_with_busy_indicator(
+                self.app.root,
+                operation=import_operation,
+                text="Importing vendor mappings...",
+                done_callback=done_callback
+            )
     
     def export_json(self):
         """Export vendor mappings to JSON."""
@@ -203,14 +219,28 @@ class VendorsTab:
         )
         
         if filename:
-            try:
-                from ...core.vendors import save_vendor_map
-                
-                save_vendor_map(self.app.vendor_map, Path(filename))
-                messagebox.showinfo("Success", f"Vendor mappings exported to {filename}")
+            from ...core.vendors import save_vendor_map
             
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to export vendor mappings:\n{e}")
+            def export_operation():
+                try:
+                    save_vendor_map(self.app.vendor_map, Path(filename))
+                    return True, None
+                except Exception as e:
+                    return False, e
+            
+            def done_callback(result, error):
+                if error:
+                    messagebox.showerror("Error", f"Failed to export vendor mappings:\n{error}")
+                else:
+                    messagebox.showinfo("Success", f"Vendor mappings exported to {filename}")
+            
+            # Run the operation with a busy indicator
+            run_with_busy_indicator(
+                self.app.root,
+                operation=export_operation,
+                text="Exporting vendor mappings...",
+                done_callback=done_callback
+            )
     
     def import_csv(self):
         """Import vendor mappings from CSV."""
@@ -220,17 +250,31 @@ class VendorsTab:
         )
         
         if filename:
-            try:
-                from ...core.vendors import import_vendor_map_csv, merge_vendor_maps
-                
-                imported_map = import_vendor_map_csv(Path(filename))
-                self.app.vendor_map = merge_vendor_maps(self.app.vendor_map, imported_map)
-                
-                self.refresh_vendor_list()
-                messagebox.showinfo("Success", f"Vendor mappings imported from {filename}")
+            from ...core.vendors import import_vendor_map_csv, merge_vendor_maps
             
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to import vendor mappings:\n{e}")
+            def import_operation():
+                try:
+                    imported_map = import_vendor_map_csv(Path(filename))
+                    merged_map = merge_vendor_maps(self.app.vendor_map, imported_map)
+                    return merged_map, None
+                except Exception as e:
+                    return None, e
+            
+            def done_callback(result, error):
+                if error:
+                    messagebox.showerror("Error", f"Failed to import vendor mappings:\n{error}")
+                else:
+                    self.app.vendor_map = result
+                    self.refresh_vendor_list()
+                    messagebox.showinfo("Success", f"Vendor mappings imported from {filename}")
+            
+            # Run the operation with a busy indicator
+            run_with_busy_indicator(
+                self.app.root,
+                operation=import_operation,
+                text="Importing vendor mappings...",
+                done_callback=done_callback
+            )
     
     def export_csv(self):
         """Export vendor mappings to CSV."""
@@ -241,25 +285,53 @@ class VendorsTab:
         )
         
         if filename:
-            try:
-                from ...core.vendors import export_vendor_map_csv
-                
-                export_vendor_map_csv(self.app.vendor_map, Path(filename))
-                messagebox.showinfo("Success", f"Vendor mappings exported to {filename}")
+            from ...core.vendors import export_vendor_map_csv
             
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to export vendor mappings:\n{e}")
+            def export_operation():
+                try:
+                    export_vendor_map_csv(self.app.vendor_map, Path(filename))
+                    return True, None
+                except Exception as e:
+                    return False, e
+            
+            def done_callback(result, error):
+                if error:
+                    messagebox.showerror("Error", f"Failed to export vendor mappings:\n{error}")
+                else:
+                    messagebox.showinfo("Success", f"Vendor mappings exported to {filename}")
+            
+            # Run the operation with a busy indicator
+            run_with_busy_indicator(
+                self.app.root,
+                operation=export_operation,
+                text="Exporting vendor mappings...",
+                done_callback=done_callback
+            )
     
     def save_changes(self):
         """Save vendor mappings to persistent storage."""
-        try:
-            from ...core.vendors import save_vendor_map
-            
-            save_vendor_map(self.app.vendor_map)
-            messagebox.showinfo("Success", "Vendor mappings saved successfully.")
+        from ...core.vendors import save_vendor_map
         
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to save vendor mappings:\n{e}")
+        def save_operation():
+            try:
+                save_vendor_map(self.app.vendor_map)
+                return True, None
+            except Exception as e:
+                return False, e
+        
+        def done_callback(result, error):
+            if error:
+                messagebox.showerror("Error", f"Failed to save vendor mappings:\n{error}")
+            else:
+                messagebox.showinfo("Success", "Vendor mappings saved successfully.")
+        
+        # Run the operation with a busy indicator
+        run_with_busy_indicator(
+            self.app.root,
+            operation=save_operation,
+            text="Saving vendor mappings...",
+            done_callback=done_callback
+        )
 
 
 class VendorDialog:

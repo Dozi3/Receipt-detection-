@@ -16,6 +16,8 @@ from .tabs.tab_parsing_naming import ParsingNamingTab
 from .tabs.tab_vendors import VendorsTab
 from .tabs.tab_outputs import OutputsTab
 from .tabs.tab_logs import LogsTab
+from .dialogs import ProcessingStatusDialog
+from .utils import BusyIndicator, run_with_busy_indicator
 
 
 class ReceiptAnalyzerApp:
@@ -33,6 +35,9 @@ class ReceiptAnalyzerApp:
         self.log_stream = LogStream()
         self.processing_thread: Optional[threading.Thread] = None
         self.is_processing = False
+        self.cancel_processing = False
+        self.progress_count = 0
+        self.total_count = 0
         
         # Initialize logging with GUI stream
         init_logger(log_stream=self.log_stream)
@@ -43,6 +48,9 @@ class ReceiptAnalyzerApp:
         
         # Configure window closing
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
+        # Setup periodic UI updates to keep the GUI responsive
+        self.setup_keep_alive()
     
     def setup_gui(self):
         """Setup the main GUI components."""
@@ -111,6 +119,34 @@ class ReceiptAnalyzerApp:
         menubar.add_cascade(label="Help", menu=help_menu)
         help_menu.add_command(label="About", command=self.show_about)
     
+    def setup_keep_alive(self):
+        """Setup a periodic task to keep the GUI responsive."""
+        def keep_alive():
+            # Process any pending events
+            self.root.update_idletasks()
+            
+            # Update progress indicator if processing
+            if self.is_processing:
+                self.update_progress_indicator()
+                
+            # Schedule the next keep_alive call
+            self.root.after(100, keep_alive)
+            
+        # Start the keep-alive loop
+        self.root.after(100, keep_alive)
+    
+    def update_progress_indicator(self):
+        """Update the progress indicator during processing."""
+        if hasattr(self, 'progress_count') and hasattr(self, 'total_count'):
+            if self.total_count > 0:
+                progress_text = f"Processing file {self.progress_count}/{self.total_count}"
+                self.status_var.set(progress_text)
+                
+                # Update progress in input_run tab if it exists
+                if 'input_run' in self.tabs:
+                    progress_pct = (self.progress_count / self.total_count) * 100
+                    self.tabs['input_run'].update_progress(progress_pct, progress_text)
+    
     def load_config_file(self):
         """Load configuration from file."""
         filename = filedialog.askopenfilename(
@@ -119,12 +155,27 @@ class ReceiptAnalyzerApp:
         )
         
         if filename:
-            try:
-                self.config = load_config(Path(filename))
-                self.update_gui_from_config()
-                messagebox.showinfo("Success", f"Configuration loaded from {filename}")
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to load configuration:\n{e}")
+            def load_operation():
+                try:
+                    return load_config(Path(filename)), None
+                except Exception as e:
+                    return None, e
+            
+            def done_callback(result, error):
+                if error:
+                    messagebox.showerror("Error", f"Failed to load configuration:\n{error}")
+                else:
+                    self.config = result
+                    self.update_gui_from_config()
+                    messagebox.showinfo("Success", f"Configuration loaded from {filename}")
+            
+            # Run the operation with a busy indicator
+            run_with_busy_indicator(
+                self.root,
+                operation=load_operation,
+                text="Loading configuration...",
+                done_callback=done_callback
+            )
     
     def save_config_file(self):
         """Save configuration to file."""
@@ -135,24 +186,58 @@ class ReceiptAnalyzerApp:
         )
         
         if filename:
-            try:
-                self.update_config_from_gui()
-                save_config(self.config, Path(filename))
-                messagebox.showinfo("Success", f"Configuration saved to {filename}")
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to save configuration:\n{e}")
+            # Update config from GUI before saving
+            self.update_config_from_gui()
+            
+            def save_operation():
+                try:
+                    save_config(self.config, Path(filename))
+                    return True, None
+                except Exception as e:
+                    return False, e
+            
+            def done_callback(result, error):
+                if error:
+                    messagebox.showerror("Error", f"Failed to save configuration:\n{error}")
+                else:
+                    messagebox.showinfo("Success", f"Configuration saved to {filename}")
+            
+            # Run the operation with a busy indicator
+            run_with_busy_indicator(
+                self.root,
+                operation=save_operation,
+                text="Saving configuration...",
+                done_callback=done_callback
+            )
     
     def check_dependencies(self):
         """Check and display dependency status."""
         from ..core.processing import check_processing_requirements
         
-        requirements_met, errors = check_processing_requirements(self.config)
+        def check_operation():
+            try:
+                return check_processing_requirements(self.config), None
+            except Exception as e:
+                return None, e
         
-        if requirements_met:
-            messagebox.showinfo("Dependencies", "All required dependencies are available.")
-        else:
-            error_msg = "Missing dependencies:\n\n" + "\n".join(f"• {error}" for error in errors)
-            messagebox.showerror("Dependencies", error_msg)
+        def done_callback(result, error):
+            if error:
+                messagebox.showerror("Error", f"Error checking dependencies:\n{error}")
+            else:
+                requirements_met, errors = result
+                if requirements_met:
+                    messagebox.showinfo("Dependencies", "All required dependencies are available.")
+                else:
+                    error_msg = "Missing dependencies:\n\n" + "\n".join(f"• {error}" for error in errors)
+                    messagebox.showerror("Dependencies", error_msg)
+        
+        # Run the operation with a busy indicator
+        run_with_busy_indicator(
+            self.root,
+            operation=check_operation,
+            text="Checking dependencies...",
+            done_callback=done_callback
+        )
     
     def clear_logs(self):
         """Clear all log entries."""
@@ -200,6 +285,12 @@ Built with Python, PyMuPDF, Tesseract OCR, OpenCV, and Tkinter."""
             self.status_var.set("Processing...")
         else:
             self.status_var.set("Ready")
+            
+            # Reset cursor
+            self.root.config(cursor="")
+            for tab in self.tabs.values():
+                if hasattr(tab, 'frame'):
+                    tab.frame.config(cursor="")
         
         # Update tabs
         for tab in self.tabs.values():
@@ -211,7 +302,28 @@ Built with Python, PyMuPDF, Tesseract OCR, OpenCV, and Tkinter."""
         if self.is_processing:
             return
         
+        # Reset cancellation flag
+        self.cancel_processing = False
+        
+        # Set progress counters
+        self.progress_count = 0
+        self.total_count = 0
+        
+        # Count PDF files for progress tracking
+        try:
+            from ..core.pdf_io import find_pdf_files
+            pdf_files = find_pdf_files(input_dir)
+            self.total_count = len(pdf_files)
+        except Exception:
+            self.total_count = 0
+        
         self.set_processing_state(True)
+        
+        # Show busy cursor for the entire application
+        self.root.config(cursor="watch")
+        for tab in self.tabs.values():
+            if hasattr(tab, 'frame'):
+                tab.frame.config(cursor="watch")
         
         # Create and start processing thread
         self.processing_thread = threading.Thread(
@@ -220,11 +332,51 @@ Built with Python, PyMuPDF, Tesseract OCR, OpenCV, and Tkinter."""
             daemon=True
         )
         self.processing_thread.start()
+        
+        # Show processing status dialog
+        self.processing_dialog = ProcessingStatusDialog(self.root, self)
+        self.processing_dialog.show()
+        
+        # Update processing dialog
+        self.root.after(1000, self.check_processing_status)
     
     def stop_processing(self):
-        """Stop the current processing (not implemented - would need process cancellation)."""
-        # Note: Actual implementation would require thread-safe cancellation mechanism
-        messagebox.showwarning("Stop Processing", "Processing cannot be stopped once started.")
+        """Stop the current processing."""
+        if not self.is_processing:
+            return
+            
+        self.cancel_processing = True
+        
+        # Update UI to indicate cancellation is in progress
+        self.status_var.set("Cancelling processing...")
+        if 'input_run' in self.tabs:
+            self.tabs['input_run'].progress_text_var.set("Cancelling...")
+        
+        # Show an info message about cancellation
+        messagebox.showinfo(
+            "Cancelling", 
+            "Processing will be cancelled after the current file completes.\n"
+            "Please wait a moment..."
+        )
+    
+    def check_processing_status(self):
+        """Check if processing is still running and update UI accordingly."""
+        if not self.is_processing:
+            return
+            
+        # Check if the thread is still alive
+        if self.processing_thread and self.processing_thread.is_alive():
+            # Schedule another check
+            self.root.after(500, self.check_processing_status)
+        else:
+            # Processing has finished or been cancelled
+            self.root.after(0, lambda: self.set_processing_state(False))
+            
+            # Restore normal cursor
+            self.root.config(cursor="")
+            for tab in self.tabs.values():
+                if hasattr(tab, 'frame'):
+                    tab.frame.config(cursor="")
     
     def _process_files(self, input_dir: Path, output_dir: Path):
         """Process files in background thread."""
@@ -246,16 +398,39 @@ Built with Python, PyMuPDF, Tesseract OCR, OpenCV, and Tkinter."""
             # Set initial status
             self.root.after(0, lambda: self.status_var.set(f"Processing {len(pdf_files)} PDF files..."))
             
+            # Add initial status to dialog if it exists
+            if hasattr(self, 'processing_dialog') and self.processing_dialog and self.processing_dialog.dialog:
+                self.root.after(0, lambda: self.processing_dialog.add_detail(f"Found {len(pdf_files)} PDF files to process"))
+            
             # Process files with exception handling for each file
             total_receipts = 0
             success_count = 0
             
             for i, pdf_path in enumerate(pdf_files):
+                # Check for cancellation
+                if self.cancel_processing:
+                    self.root.after(0, lambda: get_logger().info("Processing cancelled by user"))
+                    
+                    # Add cancellation status to dialog
+                    if hasattr(self, 'processing_dialog') and self.processing_dialog and self.processing_dialog.dialog:
+                        self.root.after(0, lambda: self.processing_dialog.add_detail("Processing cancelled by user"))
+                        
+                    break
+                    
                 try:
+                    # Update progress counter
+                    self.progress_count = i + 1
+                    
                     # Update status on main thread
                     self.root.after(0, lambda i=i, total=len(pdf_files), 
                                     path=pdf_path: self.status_var.set(
                                     f"Processing file {i+1}/{total}: {path.name}"))
+                    
+                    # Update file info in dialog
+                    if hasattr(self, 'processing_dialog') and self.processing_dialog and self.processing_dialog.dialog:
+                        self.root.after(0, lambda path=pdf_path: self.processing_dialog.file_var.set(path.name))
+                        self.root.after(0, lambda i=i, total=len(pdf_files): 
+                                      self.processing_dialog.add_detail(f"Processing file {i+1}/{total}: {pdf_path.name}"))
                     
                     # Process file
                     receipt_count = process_pdf_files([pdf_path], output_dir, self.config, self.vendor_map)
@@ -263,19 +438,40 @@ Built with Python, PyMuPDF, Tesseract OCR, OpenCV, and Tkinter."""
                     if receipt_count > 0:
                         success_count += 1
                         total_receipts += receipt_count
+                        
+                        # Add success status to dialog
+                        if hasattr(self, 'processing_dialog') and self.processing_dialog and self.processing_dialog.dialog:
+                            self.root.after(0, lambda path=pdf_path, count=receipt_count: 
+                                          self.processing_dialog.add_detail(f"Extracted {count} receipts from {path.name}"))
                 except Exception as e:
                     # Log error but continue with next file
                     self.root.after(0, lambda pdf=pdf_path, err=e: get_logger().fail(
                         f"Failed to process {pdf.name}: {err}"))
+                        
+                    # Add error status to dialog
+                    if hasattr(self, 'processing_dialog') and self.processing_dialog and self.processing_dialog.dialog:
+                        self.root.after(0, lambda pdf=pdf_path, err=e: 
+                                      self.processing_dialog.add_detail(f"Error processing {pdf.name}: {err}"))
             
-            # Show completion message on main thread
-            self.root.after(0, lambda: messagebox.showinfo(
-                "Processing Complete", 
-                f"Processing completed!\n\n"
-                f"Files processed: {success_count}/{len(pdf_files)}\n"
-                f"Total receipts: {total_receipts}\n"
-                f"Output saved to: {output_dir}"
-            ))
+            # Skip completion message if cancelled
+            if not self.cancel_processing:
+                # Show completion message on main thread
+                self.root.after(0, lambda: messagebox.showinfo(
+                    "Processing Complete", 
+                    f"Processing completed!\n\n"
+                    f"Files processed: {success_count}/{len(pdf_files)}\n"
+                    f"Total receipts: {total_receipts}\n"
+                    f"Output saved to: {output_dir}"
+                ))
+            else:
+                # Show cancellation message
+                self.root.after(0, lambda: messagebox.showinfo(
+                    "Processing Cancelled", 
+                    f"Processing was cancelled.\n\n"
+                    f"Files processed: {success_count}/{len(pdf_files)}\n"
+                    f"Total receipts: {total_receipts}\n"
+                    f"Output saved to: {output_dir}"
+                ))
         
         except Exception as e:
             # Show error on main thread
@@ -291,8 +487,39 @@ Built with Python, PyMuPDF, Tesseract OCR, OpenCV, and Tkinter."""
     def on_closing(self):
         """Handle application closing."""
         if self.is_processing:
-            if messagebox.askokcancel("Quit", "Processing is in progress. Really quit?"):
-                self.root.quit()
+            response = messagebox.askyesnocancel(
+                "Quit", 
+                "Processing is in progress.\n\n"
+                "• Click 'Yes' to cancel processing and quit\n"
+                "• Click 'No' to quit immediately (may cause data loss)\n"
+                "• Click 'Cancel' to return to the application",
+                icon=messagebox.WARNING
+            )
+            
+            if response is None:  # Cancel
+                return
+                
+            if response:  # Yes - cancel and quit
+                self.cancel_processing = True
+                self.status_var.set("Cancelling and preparing to exit...")
+                
+                # Give the processing a moment to respond to cancellation
+                def delayed_quit():
+                    # Save configuration and vendor map
+                    try:
+                        self.update_config_from_gui()
+                        save_config(self.config)
+                        save_vendor_map(self.vendor_map)
+                    except Exception:
+                        pass  # Don't prevent closing if save fails
+                    
+                    self.root.quit()
+                
+                self.root.after(1000, delayed_quit)
+                return
+                
+            # No - force quit immediately
+            self.root.quit()
         else:
             # Save configuration and vendor map
             try:

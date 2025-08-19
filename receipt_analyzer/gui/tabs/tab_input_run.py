@@ -97,7 +97,7 @@ class InputRunTab:
         # Progress bar
         self.progress_bar = ttk.Progressbar(
             progress_frame, variable=self.progress_var, 
-            mode='indeterminate'
+            mode='determinate', maximum=100.0
         )
         self.progress_bar.pack(fill=tk.X, pady=5)
         
@@ -204,9 +204,6 @@ class InputRunTab:
             messagebox.showerror("Validation Error", message)
             return
         
-        # Show validation success
-        messagebox.showinfo("Validation", message)
-        
         # Create output directory if it doesn't exist
         output_path = Path(self.output_dir_var.get())
         try:
@@ -215,14 +212,21 @@ class InputRunTab:
             messagebox.showerror("Error", f"Could not create output directory:\n{e}")
             return
         
-        # Clear status display
+        # Clear status display and reset progress
         self.clear_status()
+        self.progress_var.set(0)
+        self.progress_bar["value"] = 0
+        self.progress_text_var.set("Starting processing...")
+        
+        # Show busy cursor for this tab
+        self.frame.config(cursor="watch")
         
         # Start processing via app
         self.app.start_processing(Path(self.input_dir_var.get()), output_path)
     
     def stop_processing(self):
         """Stop the current processing."""
+        self.progress_text_var.set("Cancelling processing...")
         self.app.stop_processing()
     
     def open_output_dir(self):
@@ -277,12 +281,37 @@ class InputRunTab:
         if is_processing:
             self.run_button.config(state=tk.DISABLED)
             self.stop_button.config(state=tk.NORMAL)
-            self.progress_bar.start()
+            self.progress_bar["value"] = 0
+            self.progress_bar["mode"] = "determinate"
+            
+            # Disable input fields during processing
+            self.input_dir_entry.config(state=tk.DISABLED)
+            self.output_dir_entry.config(state=tk.DISABLED)
         else:
             self.run_button.config(state=tk.NORMAL)
             self.stop_button.config(state=tk.DISABLED)
-            self.progress_bar.stop()
+            self.progress_bar["value"] = 0
             self.progress_text_var.set("Processing complete")
+            
+            # Re-enable input fields
+            self.input_dir_entry.config(state=tk.NORMAL)
+            self.output_dir_entry.config(state=tk.NORMAL)
+    
+    def update_progress(self, percentage, message=None):
+        """Update the progress bar and message."""
+        try:
+            self.progress_var.set(percentage)
+            self.progress_bar["value"] = percentage
+            
+            if message:
+                self.progress_text_var.set(message)
+                
+            # Force update of progress UI
+            self.progress_bar.update_idletasks()
+            self.progress_label.update_idletasks()
+        except Exception:
+            # Ignore errors during UI updates
+            pass
     
     def update_from_config(self):
         """Update GUI from configuration."""

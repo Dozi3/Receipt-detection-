@@ -323,6 +323,9 @@ Built with Python, PyMuPDF, Tesseract OCR, OpenCV, and Tkinter."""
             self.total_count = len(pdf_files)
         except Exception:
             self.total_count = 0
+
+        # Update config from GUI BEFORE starting the background thread
+        self.update_config_from_gui()
         
         self.set_processing_state(True)
         
@@ -401,9 +404,6 @@ Built with Python, PyMuPDF, Tesseract OCR, OpenCV, and Tkinter."""
             from ..core.processing import process_pdf_files
             from ..core.pdf_io import find_pdf_files
             
-            # Update config from GUI before starting processing
-            self.update_config_from_gui()
-            
             # Find PDF files
             pdf_files = find_pdf_files(input_dir)
             if not pdf_files:
@@ -438,6 +438,10 @@ Built with Python, PyMuPDF, Tesseract OCR, OpenCV, and Tkinter."""
                     # Update progress counter
                     self.progress_count = i + 1
                     
+                    # Add debug logging
+                    self.root.after(0, lambda i=i, total=len(pdf_files), path=pdf_path: 
+                                   get_logger().debug(f"Starting processing of file {i+1}/{total}: {path.name}"))
+                    
                     # Update status on main thread
                     self.root.after(0, lambda i=i, total=len(pdf_files), 
                                     path=pdf_path: self.status_var.set(
@@ -449,8 +453,20 @@ Built with Python, PyMuPDF, Tesseract OCR, OpenCV, and Tkinter."""
                         self.root.after(0, lambda i=i, total=len(pdf_files): 
                                       self.processing_dialog.add_detail(f"Processing file {i+1}/{total}: {pdf_path.name}"))
                     
-                    # Process file
+                    # Force GUI update before starting intensive processing
+                    import time
+                    time.sleep(0.1)  # Small delay to allow GUI updates
+                    
+                    # Log before processing starts
+                    self.root.after(0, lambda path=pdf_path: 
+                                   get_logger().debug(f"About to call process_pdf_files for {path.name}"))
+                    
+                    # Process file with better error handling
                     receipt_count = process_pdf_files([pdf_path], output_dir, self.config, self.vendor_map)
+                    
+                    # Log after processing completes
+                    self.root.after(0, lambda path=pdf_path, count=receipt_count: 
+                                   get_logger().debug(f"process_pdf_files completed for {path.name}, found {count} receipts"))
                     
                     if receipt_count > 0:
                         success_count += 1

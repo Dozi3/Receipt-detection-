@@ -125,6 +125,10 @@ class InputRunTab:
         # Set up log monitoring
         self.app.log_stream.add_listener(self.on_log_message)
         
+        # Add throttling for log messages
+        self.last_log_update = 0
+        self.log_update_throttle = 0.1  # Only update GUI every 100ms
+        
         # Set default directories
         self.set_default_directories()
     
@@ -261,11 +265,23 @@ class InputRunTab:
         self.status_text.config(state=tk.DISABLED)
     
     def on_log_message(self, log_record):
-        """Handle new log messages."""
+        """Handle new log messages with throttling to prevent GUI overload."""
+        import time
+        current_time = time.time()
+        
+        # Only process important messages immediately
+        is_important = log_record.level in ['INFO', 'SUCCESS', 'WARN', 'FAIL']
+        
+        # Throttle debug messages to prevent GUI overload
+        if not is_important and (current_time - self.last_log_update) < self.log_update_throttle:
+            return
+            
+        self.last_log_update = current_time
+        
         # Update status display on main thread
         self.app.root.after(0, lambda: self._add_status_message(str(log_record)))
         
-        # Update progress text
+        # Update progress text for important messages
         if log_record.level in ['INFO', 'SUCCESS']:
             self.app.root.after(0, lambda: self.progress_text_var.set(log_record.message))
     

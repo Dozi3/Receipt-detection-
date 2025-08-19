@@ -26,6 +26,10 @@ class LogsTab:
         # Set up log monitoring
         self.app.log_stream.add_listener(self.on_log_message)
         
+        # Add throttling for log messages
+        self.last_log_update = 0
+        self.log_update_throttle = 0.2  # Only update GUI every 200ms
+        
         # Initial load
         self.refresh_display()
     
@@ -104,7 +108,19 @@ class LogsTab:
         self.refresh_display()
     
     def on_log_message(self, log_record):
-        """Handle new log message."""
+        """Handle new log message with throttling to prevent GUI overload."""
+        import time
+        current_time = time.time()
+        
+        # Only process important messages immediately
+        is_important = log_record.level in ['INFO', 'SUCCESS', 'WARN', 'FAIL']
+        
+        # Throttle debug messages to prevent GUI overload
+        if not is_important and (current_time - self.last_log_update) < self.log_update_throttle:
+            return
+            
+        self.last_log_update = current_time
+        
         # Update display on main thread
         self.app.root.after(0, lambda: self._add_log_record(log_record))
     

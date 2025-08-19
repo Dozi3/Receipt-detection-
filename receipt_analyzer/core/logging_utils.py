@@ -177,6 +177,24 @@ def get_logger() -> Logger:
     return _logger
 
 
+def configure_logging(level=logging.INFO):
+    """Configure logging system with the specified level."""
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+    # Also configure the application logger
+    logger = get_logger()
+    if hasattr(logger, 'set_level'):
+        logger.set_level(level)
+    # The standard logger has a different method name
+    elif hasattr(logger, 'setLevel'):
+        logger.setLevel(level)
+
+
 def log_info(message: str):
     """Log an info message using the global logger."""
     get_logger().info(message)

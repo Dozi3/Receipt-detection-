@@ -5,6 +5,8 @@ from PIL import Image
 from pathlib import Path
 from typing import List, Tuple, Optional, Union
 import io
+import traceback
+import threading
 
 from .logging_utils import get_logger, format_pdf_log
 
@@ -45,30 +47,45 @@ def extract_embedded_images(pdf_path: Path, page_num: int) -> List[Image.Image]:
     images = []
     
     try:
+        logger.debug(f"Opening PDF file: {pdf_path}")
         doc = fitz.open(pdf_path)
         
         if page_num >= len(doc):
             logger.fail(format_pdf_log(str(pdf_path), page_num + 1, "page number out of range"))
             return []
         
+        logger.debug(f"Accessing page {page_num+1} of {len(doc)}")
         page = doc[page_num]
+        
+        # Log page dimensions and rotation
+        logger.debug(f"Page dimensions: {page.rect.width}x{page.rect.height} points, rotation: {page.rotation}")
+        
+        logger.debug("Getting image list from page")
         image_list = page.get_images()
         
         if not image_list:
             logger.info(format_pdf_log(str(pdf_path), page_num + 1, "no embedded images found"))
             return []
         
+        logger.debug(f"Found {len(image_list)} embedded images")
+        
         for img_index, img in enumerate(image_list):
             try:
+                logger.debug(f"Processing embedded image {img_index+1}")
                 # Get image data
                 xref = img[0]
+                logger.debug(f"Getting pixmap for image with xref: {xref}")
                 pix = fitz.Pixmap(doc, xref)
+                
+                logger.debug(f"Pixmap created, size: {pix.width}x{pix.height}, components: {pix.n}, alpha: {pix.alpha}")
                 
                 # Convert to PIL Image
                 if pix.n - pix.alpha < 4:  # GRAY or RGB
+                    logger.debug("Converting GRAY or RGB pixmap to PIL Image")
                     img_data = pix.tobytes("ppm")
                     pil_image = Image.open(io.BytesIO(img_data))
                 else:  # CMYK
+                    logger.debug("Converting CMYK pixmap to PIL Image")
                     img_data = pix.tobytes("ppm")
                     pil_image = Image.open(io.BytesIO(img_data))
                 
@@ -86,11 +103,13 @@ def extract_embedded_images(pdf_path: Path, page_num: int) -> List[Image.Image]:
             except Exception as e:
                 logger.warn(format_pdf_log(str(pdf_path), page_num + 1, 
                                          f"failed to extract embedded image {img_index + 1}: {e}"))
+                logger.debug(f"Exception details: {traceback.format_exc()}")
         
         doc.close()
         
     except Exception as e:
         logger.fail(format_pdf_log(str(pdf_path), page_num + 1, f"failed to extract embedded images: {e}"))
+        logger.debug(f"Exception details: {traceback.format_exc()}")
     
     return images
 

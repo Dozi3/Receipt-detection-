@@ -20,16 +20,82 @@ def check_opencv_available() -> bool:
 
 def pil_to_cv2(pil_image: Image.Image) -> np.ndarray:
     """Convert PIL Image to OpenCV format."""
-    if pil_image.mode != 'RGB':
-        pil_image = pil_image.convert('RGB')
-    return np.array(pil_image)[:, :, ::-1]  # RGB to BGR
+    from .logging_utils import get_logger, log_debug
+    
+    logger = get_logger()
+    
+    try:
+        # Check for None
+        if pil_image is None:
+            logger.debug("pil_to_cv2: Input image is None")
+            raise ValueError("Input image is None")
+            
+        # Check image dimensions
+        if pil_image.size[0] <= 0 or pil_image.size[1] <= 0:
+            logger.debug(f"pil_to_cv2: Invalid image dimensions: {pil_image.size}")
+            raise ValueError(f"Invalid image dimensions: {pil_image.size}")
+            
+        # Log image info
+        logger.debug(f"pil_to_cv2: Input image: {pil_image.size[0]}x{pil_image.size[1]}, mode: {pil_image.mode}")
+        
+        # Convert mode if needed
+        if pil_image.mode != 'RGB':
+            logger.debug(f"pil_to_cv2: Converting mode from {pil_image.mode} to RGB")
+            pil_image = pil_image.convert('RGB')
+            
+        # Convert to numpy array
+        np_image = np.array(pil_image)
+        logger.debug(f"pil_to_cv2: Converted to numpy array: {np_image.shape}")
+        
+        # Convert RGB to BGR (OpenCV format)
+        cv_image = np_image[:, :, ::-1]  # RGB to BGR
+        logger.debug(f"pil_to_cv2: Final OpenCV image shape: {cv_image.shape}")
+        
+        return cv_image
+        
+    except Exception as e:
+        logger.debug(f"pil_to_cv2: Error converting PIL image to OpenCV: {e}")
+        raise
 
 
 def cv2_to_pil(cv2_image: np.ndarray) -> Image.Image:
     """Convert OpenCV image to PIL format."""
-    if len(cv2_image.shape) == 3:
-        cv2_image = cv2_image[:, :, ::-1]  # BGR to RGB
-    return Image.fromarray(cv2_image)
+    from .logging_utils import get_logger, log_debug
+    
+    logger = get_logger()
+    
+    try:
+        # Check for None
+        if cv2_image is None:
+            logger.debug("cv2_to_pil: Input image is None")
+            raise ValueError("Input image is None")
+            
+        # Check image dimensions
+        if cv2_image.shape[0] <= 0 or cv2_image.shape[1] <= 0:
+            logger.debug(f"cv2_to_pil: Invalid image dimensions: {cv2_image.shape}")
+            raise ValueError(f"Invalid image dimensions: {cv2_image.shape}")
+            
+        # Log image info
+        logger.debug(f"cv2_to_pil: Input image shape: {cv2_image.shape}")
+        
+        # Convert BGR to RGB if color image
+        if len(cv2_image.shape) == 3:
+            logger.debug("cv2_to_pil: Converting BGR to RGB")
+            rgb_image = cv2_image[:, :, ::-1]  # BGR to RGB
+        else:
+            # Grayscale image
+            logger.debug("cv2_to_pil: Input is grayscale, no color conversion needed")
+            rgb_image = cv2_image
+            
+        # Convert to PIL Image
+        pil_image = Image.fromarray(rgb_image)
+        logger.debug(f"cv2_to_pil: Converted to PIL image: {pil_image.size[0]}x{pil_image.size[1]}, mode: {pil_image.mode}")
+        
+        return pil_image
+        
+    except Exception as e:
+        logger.debug(f"cv2_to_pil: Error converting OpenCV image to PIL: {e}")
+        raise
 
 
 def preprocess_image(image: np.ndarray, config: OpenCVConfig) -> np.ndarray:
@@ -323,10 +389,27 @@ def detect_receipts_opencv(images: List[Image.Image], pdf_path: str, page_num: i
         return []
     
     # Use the largest image as the main canvas
-    main_image = max(images, key=lambda img: img.size[0] * img.size[1])
+    try:
+        logger.debug(f"Finding largest image from {len(images)} images")
+        for i, img in enumerate(images):
+            logger.debug(f"Image {i+1}: {img.size[0]}x{img.size[1]}, mode: {img.mode}")
+            
+        main_image = max(images, key=lambda img: img.size[0] * img.size[1])
+        logger.debug(f"Selected main image: {main_image.size[0]}x{main_image.size[1]}, mode: {main_image.mode}")
+    except Exception as e:
+        logger.fail(format_pdf_log(pdf_path, page_num + 1, f"failed to select main image: {e}"))
+        # Try to use the first image as fallback
+        if images:
+            main_image = images[0]
+            logger.debug(f"Falling back to first image: {main_image.size[0]}x{main_image.size[1]}, mode: {main_image.mode}")
+        else:
+            logger.fail(format_pdf_log(pdf_path, page_num + 1, "no images available"))
+            return []
     
     try:
+        logger.debug("Converting PIL image to OpenCV format")
         cv_image = pil_to_cv2(main_image)
+        logger.debug(f"Converted to OpenCV image: {cv_image.shape}")
     except Exception as e:
         logger.warn(format_pdf_log(pdf_path, page_num + 1, f"failed to convert image to OpenCV format: {e}"))
         logger.info(format_pdf_log(pdf_path, page_num + 1, "1 receipts detected (method=opencv-fallback)"))
@@ -337,9 +420,12 @@ def detect_receipts_opencv(images: List[Image.Image], pdf_path: str, page_num: i
     
     try:
         # Preprocess image
+        logger.debug("Preprocessing image for contour detection")
         processed = preprocess_image(cv_image, config)
+        logger.debug(f"Preprocessed image shape: {processed.shape}")
         
         # Find receipt contours
+        logger.debug("Finding receipt contours")
         quads = find_receipt_contours(processed, cv_image.shape[:2], config)
         
         logger.debug(format_pdf_log(pdf_path, page_num + 1, f"found {len(quads)} potential receipt contours"))
@@ -350,18 +436,22 @@ def detect_receipts_opencv(images: List[Image.Image], pdf_path: str, page_num: i
             return [main_image]
         
         # Remove overlapping quads
+        logger.debug("Removing overlapping quadrilaterals")
         quads = remove_overlapping_quads(quads)
         logger.debug(format_pdf_log(pdf_path, page_num + 1, f"after removing overlaps: {len(quads)} contours"))
         
         # Sort in reading order
+        logger.debug("Sorting quadrilaterals in reading order")
         quads = sort_quads_reading_order(quads)
         
         # Extract receipts using perspective transformation
         receipts = []
         for i, quad in enumerate(quads):
             try:
+                logger.debug(f"Applying perspective transform to quad {i+1}")
                 warped = apply_perspective_transform(cv_image, quad, config)
                 if warped is not None and warped.shape[0] > 0 and warped.shape[1] > 0:
+                    logger.debug(f"Warped image dimensions: {warped.shape[1]}x{warped.shape[0]}")
                     receipt_image = cv2_to_pil(warped)
                     receipts.append(receipt_image)
                     logger.info(format_pdf_log(pdf_path, page_num + 1, 
@@ -382,6 +472,6 @@ def detect_receipts_opencv(images: List[Image.Image], pdf_path: str, page_num: i
         return receipts
         
     except Exception as e:
-        logger.warn(format_pdf_log(pdf_path, page_num + 1, f"opencv detection failed: {e}, using whole page"))
+        logger.warn(format_pdf_log(pdf_path, page_num + 1, f"opencv detection failed: {e}"))
         logger.info(format_pdf_log(pdf_path, page_num + 1, "1 receipts detected (method=opencv-error-fallback)"))
         return [main_image]  # Return original image as fallback

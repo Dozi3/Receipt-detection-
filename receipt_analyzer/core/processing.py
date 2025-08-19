@@ -19,20 +19,41 @@ from .logging_utils import get_logger, log_info, log_success, log_warn, log_fail
 
 def resize_image_for_output(image: Image.Image, max_edge: int) -> Image.Image:
     """Resize image for final output if needed."""
-    width, height = image.size
+    logger = get_logger()
     
-    if max(width, height) <= max_edge:
+    try:
+        width, height = image.size
+        logger.debug(f"resize_image_for_output: Input image: {width}x{height}, mode: {image.mode}")
+        
+        if max(width, height) <= max_edge:
+            logger.debug(f"resize_image_for_output: No resize needed, max dimension {max(width, height)} <= {max_edge}")
+            return image
+        
+        # Calculate new dimensions maintaining aspect ratio
+        if width > height:
+            new_width = max_edge
+            new_height = int(height * max_edge / width)
+            logger.debug(f"resize_image_for_output: Width-limited resize to {new_width}x{new_height}")
+        else:
+            new_height = max_edge
+            new_width = int(width * max_edge / height)
+            logger.debug(f"resize_image_for_output: Height-limited resize to {new_width}x{new_height}")
+        
+        # Ensure minimum dimensions
+        new_width = max(new_width, 1)
+        new_height = max(new_height, 1)
+        
+        # Perform the resize
+        resized = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        logger.debug(f"resize_image_for_output: Resized image: {resized.size[0]}x{resized.size[1]}, mode: {resized.mode}")
+        
+        return resized
+    except Exception as e:
+        import traceback
+        logger.warn(f"resize_image_for_output: Error resizing image: {e}")
+        logger.debug(f"resize_image_for_output: Error details: {traceback.format_exc()}")
+        # Return original image as fallback
         return image
-    
-    # Calculate new dimensions maintaining aspect ratio
-    if width > height:
-        new_width = max_edge
-        new_height = int(height * max_edge / width)
-    else:
-        new_height = max_edge
-        new_width = int(width * max_edge / height)
-    
-    return image.resize((new_width, new_height), Image.Resampling.LANCZOS)
 
 
 def save_image(image: Image.Image, output_path: Path, config: Config) -> bool:
@@ -51,7 +72,9 @@ def save_image(image: Image.Image, output_path: Path, config: Config) -> bool:
         # Ensure output directory exists
         output_path.parent.mkdir(parents=True, exist_ok=True)
         # Resize if needed
+        logger.debug(f"Original image: {width}x{height}, mode: {image.mode}")
         image = resize_image_for_output(image, config.output.max_edge)
+        logger.debug(f"After resize: {image.size[0]}x{image.size[1]}")
         # Determine format from extension if possible
         ext = output_path.suffix.lower()
         fmt = None
@@ -63,26 +86,43 @@ def save_image(image: Image.Image, output_path: Path, config: Config) -> bool:
             fmt = 'TIFF'
         else:
             fmt = config.output.format.upper() if hasattr(config.output, 'format') else 'PNG'
+        logger.debug(f"Selected output format: {fmt}")
         # Convert to appropriate mode
         if fmt == 'JPEG':
             if image.mode not in ('RGB', 'L'):
+                logger.debug(f"Converting image from {image.mode} to RGB for JPEG format")
                 image = image.convert('RGB')
         elif fmt == 'PNG':
             if image.mode not in ('RGB', 'RGBA', 'L'):
+                logger.debug(f"Converting image from {image.mode} to RGBA for PNG format")
                 image = image.convert('RGBA')
         # Save with appropriate options
-        if fmt == 'JPEG':
-            image.save(output_path, fmt, quality=getattr(config.output, 'jpeg_quality', 90), optimize=True)
-        elif fmt == 'PNG':
-            image.save(output_path, fmt, optimize=True)
-        elif fmt == 'TIFF':
-            image.save(output_path, fmt)
-        else:
-            image.save(output_path)
-        logger.debug(f"Saved image to {output_path} as {fmt}")
+        try:
+            if fmt == 'JPEG':
+                quality = getattr(config.output, 'jpeg_quality', 90)
+                logger.debug(f"Saving as JPEG with quality {quality}")
+                image.save(output_path, fmt, quality=quality, optimize=True)
+            elif fmt == 'PNG':
+                logger.debug("Saving as PNG with optimization")
+                image.save(output_path, fmt, optimize=True)
+            elif fmt == 'TIFF':
+                logger.debug("Saving as TIFF")
+                image.save(output_path, fmt)
+            else:
+                logger.debug(f"Saving with default settings, format: {fmt}")
+                image.save(output_path)
+        except Exception as save_error:
+            import traceback
+            logger.warn(f"Save operation failed: {save_error}")
+            logger.debug(f"Save error details: {traceback.format_exc()}")
+            raise
+        
+        logger.debug(f"Successfully saved image to {output_path} as {fmt}")
         return True
     except Exception as e:
+        import traceback
         logger.warn(f"Failed to save image to {output_path}: {e}")
+        logger.debug(f"Save error details: {traceback.format_exc()}")
         return False
 
 
@@ -101,40 +141,69 @@ def process_receipt(image: Image.Image, config: Config, vendor_map: Optional[Ven
         logger.warn(format_receipt_log(pdf_path, page_num + 1, receipt_num + 1, "null image, skipping"))
         return None
         
-    # Check image dimensions
+    # Check image dimensions and validity
     try:
         width, height = image.size
+        logger.debug(f"process_receipt: Receipt image size: {width}x{height}, mode: {image.mode}")
+        
         if width < 50 or height < 50:
             logger.warn(format_receipt_log(pdf_path, page_num + 1, receipt_num + 1, 
                                          f"image too small ({width}x{height}), skipping"))
             return None
+            
+        # Basic validation to ensure image data is accessible
+        try:
+            # Try to access a pixel to ensure image data is valid
+            image.getpixel((0, 0))
+        except Exception as pixel_error:
+            logger.warn(format_receipt_log(pdf_path, page_num + 1, receipt_num + 1, 
+                                         f"corrupt image data: {pixel_error}, skipping"))
+            return None
+            
     except Exception as e:
+        import traceback
         logger.warn(format_receipt_log(pdf_path, page_num + 1, receipt_num + 1, 
                                      f"invalid image: {e}, skipping"))
+        logger.debug(f"Image validation error details: {traceback.format_exc()}")
         return None
     
     # Perform OCR
-    text, ocr_metadata = perform_ocr(
-        image, config.ocr, pdf_path, page_num, receipt_num, auto_orient=True
-    )
-    
-    if not text:
+    try:
+        logger.debug(f"process_receipt: Performing OCR on image {receipt_num+1} from page {page_num+1}")
+        text, ocr_metadata = perform_ocr(
+            image, config.ocr, pdf_path, page_num, receipt_num, auto_orient=True
+        )
+        
+        if not text:
+            logger.warn(format_receipt_log(pdf_path, page_num + 1, receipt_num + 1, 
+                                         "no text extracted, skipping"))
+            return None
+            
+        logger.debug(f"process_receipt: OCR successful, extracted {len(text)} characters")
+            
+    except Exception as ocr_error:
+        import traceback
         logger.warn(format_receipt_log(pdf_path, page_num + 1, receipt_num + 1, 
-                                     "no text extracted, skipping"))
+                                     f"OCR failed: {ocr_error}, skipping"))
+        logger.debug(f"OCR error details: {traceback.format_exc()}")
         return None
     
     # Parse receipt text
-    keyword_map = vendor_map.keywords if vendor_map else {}
-    ignored_domains = list(vendor_map.ignored_domains) if vendor_map else None
-    
     try:
+        logger.debug(f"process_receipt: Parsing receipt text")
+        keyword_map = vendor_map.keywords if vendor_map else {}
+        ignored_domains = list(vendor_map.ignored_domains) if vendor_map else None
         parsed_receipt = parse_receipt_text(
             text, keyword_map, ignored_domains, pdf_path, page_num, receipt_num
         )
         
         # Apply synonym resolution if vendor found
         if parsed_receipt.vendor and vendor_map:
-            parsed_receipt.vendor = vendor_map.resolve_synonym(parsed_receipt.vendor)
+            try:
+                parsed_receipt.vendor = vendor_map.resolve_synonym(parsed_receipt.vendor)
+            except Exception as synonym_error:
+                logger.warn(format_receipt_log(pdf_path, page_num + 1, receipt_num + 1, 
+                                             f"vendor synonym resolution failed: {synonym_error}"))
             
         # Validate parsed data and add placeholders for missing fields
         if not parsed_receipt.vendor:
@@ -153,11 +222,14 @@ def process_receipt(image: Image.Image, config: Config, vendor_map: Optional[Ven
             from datetime import date
             parsed_receipt.date = date.today()
         
+        logger.debug(f"process_receipt: Parsing completed successfully")
         return parsed_receipt, ocr_metadata
         
     except Exception as e:
+        import traceback
         logger.warn(format_receipt_log(pdf_path, page_num + 1, receipt_num + 1, 
                                      f"parsing failed: {e}"))
+        logger.debug(f"Parsing error details: {traceback.format_exc()}")
         return None
 
 
@@ -181,19 +253,39 @@ def process_pdf_page(pdf_path: Path, page_num: int, config: Config,
     
     try:
         # Get images from PDF page
+        logger.debug(f"process_pdf_page: Processing {pdf_path}, page {page_num+1}")
         images = get_page_images(pdf_path, page_num)
         if not images:
             logger.warn(format_pdf_log(str(pdf_path), page_num + 1, "no images extracted from page"))
             return records
         
+        logger.debug(f"process_pdf_page: Extracted {len(images)} image(s) from page {page_num+1}")
+        
         # Detect receipts using configured method
-        if config.detection_method == 'simple':
-            receipt_images = detect_receipts_simple(images, str(pdf_path), page_num)
-        else:  # opencv
-            receipt_images = detect_receipts_opencv(images, str(pdf_path), page_num, config.opencv)
+        receipt_images = []
+        try:
+            if config.detection_method == 'simple':
+                logger.debug(f"process_pdf_page: Using simple detection method")
+                receipt_images = detect_receipts_simple(images, str(pdf_path), page_num)
+            else:  # opencv
+                logger.debug(f"process_pdf_page: Using OpenCV detection method")
+                receipt_images = detect_receipts_opencv(images, str(pdf_path), page_num, config.opencv)
+            
+            logger.debug(f"process_pdf_page: Detection found {len(receipt_images) if receipt_images else 0} receipt(s)")
+        except Exception as e:
+            import traceback
+            logger.warn(f"process_pdf_page: Receipt detection failed: {e}")
+            logger.debug(f"process_pdf_page: Detection error details: {traceback.format_exc()}")
+            # If this is the first page and detection failed, it might be a summary page
+            if page_num == 0:
+                logger.info(f"process_pdf_page: First page detection failed, possibly a non-receipt summary page")
+            return records
         
         if not receipt_images:
             logger.warn(format_pdf_log(str(pdf_path), page_num + 1, "no receipt images detected"))
+            # If this is the first page, it might be a summary page
+            if page_num == 0:
+                logger.info(f"process_pdf_page: First page has no receipts, possibly a summary page")
             return records
         
         # Create page output directory
@@ -204,6 +296,26 @@ def process_pdf_page(pdf_path: Path, page_num: int, config: Config,
         page_receipts = []
         for receipt_num, receipt_image in enumerate(receipt_images):
             try:
+                # Validate image before processing
+                if receipt_image is None:
+                    logger.warn(format_pdf_log(str(pdf_path), page_num + 1, 
+                                             f"receipt {receipt_num + 1}: image is None, skipping"))
+                    continue
+                
+                try:
+                    # Basic image validation
+                    width, height = receipt_image.size
+                    if width <= 10 or height <= 10:
+                        logger.warn(format_pdf_log(str(pdf_path), page_num + 1, 
+                                                f"receipt {receipt_num + 1}: image too small ({width}x{height}), skipping"))
+                        continue
+                except Exception as img_error:
+                    logger.warn(format_pdf_log(str(pdf_path), page_num + 1, 
+                                             f"receipt {receipt_num + 1}: invalid image: {img_error}, skipping"))
+                    continue
+                
+                logger.debug(f"process_pdf_page: Processing receipt {receipt_num+1}, size: {receipt_image.size}")
+                
                 # Process receipt (OCR + parsing)
                 result = process_receipt(
                     receipt_image, config, vendor_map, str(pdf_path), page_num, receipt_num
@@ -225,7 +337,14 @@ def process_pdf_page(pdf_path: Path, page_num: int, config: Config,
                 final_filename = output_path.name
                 
                 # Save image
-                if save_image(receipt_image, output_path, config):
+                save_success = False
+                try:
+                    save_success = save_image(receipt_image, output_path, config)
+                except Exception as save_error:
+                    logger.warn(format_pdf_log(str(pdf_path), page_num + 1, 
+                                             f"receipt {receipt_num + 1}: error saving image: {save_error}"))
+                
+                if save_success:
                     log_success(format_pdf_log(str(pdf_path), page_num + 1, 
                                              f"receipt {receipt_num + 1} -> {page_dir.name}/{final_filename}"))
                     
@@ -260,8 +379,10 @@ def process_pdf_page(pdf_path: Path, page_num: int, config: Config,
                                           f"receipt {receipt_num + 1}: failed to save image"))
             
             except Exception as e:
+                import traceback
                 log_fail(format_pdf_log(str(pdf_path), page_num + 1, 
                                       f"receipt {receipt_num + 1}: processing error: {e}"))
+                logger.debug(f"Receipt processing error details: {traceback.format_exc()}")
         
         # Create per-page ZIP if requested and receipts were saved
         if config.output.per_page_zip and page_receipts:
@@ -282,7 +403,9 @@ def process_pdf_page(pdf_path: Path, page_num: int, config: Config,
                                       f"failed to create ZIP archive: {e}"))
     
     except Exception as e:
+        import traceback
         log_fail(format_pdf_log(str(pdf_path), page_num + 1, f"page processing failed: {e}"))
+        logger.debug(f"Page processing error details: {traceback.format_exc()}")
         
     return records
 
@@ -313,44 +436,77 @@ def process_pdf_files(pdf_files: List[Path], output_dir: Path, config: Config,
     for pdf_path in pdf_files:
         try:
             log_info(f"Processing {pdf_path.name}")
+            logger.debug(f"process_pdf_files: Starting processing of {pdf_path}")
             
-            page_count = get_pdf_page_count(pdf_path)
-            if page_count == 0:
-                log_fail(f"{pdf_path.name}: no pages found")
+            # Verify the file exists and is accessible
+            if not pdf_path.exists():
+                log_fail(f"{pdf_path.name}: file not found")
+                continue
+                
+            try:
+                page_count = get_pdf_page_count(pdf_path)
+                logger.debug(f"process_pdf_files: {pdf_path.name} has {page_count} pages")
+                
+                if page_count == 0:
+                    log_fail(f"{pdf_path.name}: no pages found")
+                    continue
+            except Exception as page_count_error:
+                import traceback
+                log_fail(f"{pdf_path.name}: error getting page count: {page_count_error}")
+                logger.debug(f"Page count error details: {traceback.format_exc()}")
                 continue
             
             pdf_receipts = 0
             
             # Process each page
             for page_num in range(page_count):
-                page_records = process_pdf_page(
-                    pdf_path, page_num, config, vendor_map, output_dir
-                )
-                all_records.extend(page_records)
-                pdf_receipts += len(page_records)
+                logger.debug(f"process_pdf_files: Processing page {page_num+1} of {page_count}")
+                try:
+                    page_records = process_pdf_page(
+                        pdf_path, page_num, config, vendor_map, output_dir
+                    )
+                    all_records.extend(page_records)
+                    pdf_receipts += len(page_records)
+                    
+                    logger.debug(f"process_pdf_files: Page {page_num+1} yielded {len(page_records)} receipts")
+                except Exception as page_error:
+                    import traceback
+                    log_fail(f"{pdf_path.name}, page {page_num+1}: processing failed: {page_error}")
+                    logger.debug(f"Page processing error details: {traceback.format_exc()}")
+                    # Continue with other pages
             
             if pdf_receipts > 0:
-                log_info(f"Completed {pdf_path.name}: {pdf_receipts} receipts processed")
+                log_success(f"Completed {pdf_path.name}: {pdf_receipts} receipts processed")
                 total_receipts += pdf_receipts
             else:
                 log_warn(f"No receipts extracted from {pdf_path.name}")
         
         except Exception as e:
+            import traceback
             log_fail(f"Failed to process {pdf_path.name}: {e}")
+            logger.debug(f"PDF processing error details: {traceback.format_exc()}")
     
     # Export CSV files
     if all_records:
-        csv_results = export_all_csv_files(all_records, output_dir)
-        
-        for csv_type, success in csv_results.items():
-            if success:
-                log_info(f"Generated {csv_type}.csv")
-            else:
-                log_warn(f"Failed to generate {csv_type}.csv")
+        try:
+            csv_results = export_all_csv_files(all_records, output_dir)
+            
+            for csv_type, success in csv_results.items():
+                if success:
+                    log_info(f"Generated {csv_type}.csv")
+                else:
+                    log_warn(f"Failed to generate {csv_type}.csv")
+        except Exception as export_error:
+            import traceback
+            log_fail(f"Failed to export CSV files: {export_error}")
+            logger.debug(f"CSV export error details: {traceback.format_exc()}")
     
     # Save updated vendor map (in case of auto-learning)
     if vendor_map:
-        save_vendor_map(vendor_map)
+        try:
+            save_vendor_map(vendor_map)
+        except Exception as vendor_error:
+            logger.warn(f"Failed to save vendor map: {vendor_error}")
     
     return total_receipts
 

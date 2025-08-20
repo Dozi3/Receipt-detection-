@@ -1,0 +1,15 @@
+﻿Processing Summary
+Total Records,2
+Successful Records,1
+Success Rate,50.0%
+Total Amount,£24.99
+
+Extraction Methods
+Method,Count
+amount_largest amount: 24.99,1
+date_most recent date: 01/05/2023,1
+vendor_first clean line,2
+
+PDF Statistics
+PDF File,Total Receipts,Successful,Success Rate,Total Amount
+sample_receipt.pdf,2,1,50.0%,£24.99

@@ -1,0 +1,11 @@
+{
+  "detection_method": "opencv",
+  "output": {
+    "format": "png",
+    "jpeg_quality": 85
+  },
+  "ocr": {
+    "language": "eng",
+    "psm": 6
+  }
+}

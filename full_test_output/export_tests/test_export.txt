@@ -1,0 +1,13 @@
+RECEIPT PROCESSING RESULTS
+==================================================
+
+File: test_receipt_1.pdf
+Text: Sample receipt text for testing
+Confidence: 0.95
+------------------------------
+File: test_receipt_2.pdf
+Text: Another sample receipt with more text content
+Confidence: 0.87
+------------------------------
+
+Summary: {'total_files': 2, 'total_receipts': 2, 'processing_time': '5.2 seconds', 'method': 'test'}

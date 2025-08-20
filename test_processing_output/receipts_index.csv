@@ -1,0 +1,3 @@
+﻿Receipt File,Vendor,Amount,Date,PDF Source,Page,Status,Notes
+page_1/Ores_Seen_Murano_Eanasino_GBP-0-00_20-08-2025_2.png,Ores Seen Murano Eanasino,0.00,20/08/2025,sample_receipt.pdf,1,Incomplete,Missing: amount
+page_2/Office_Supplies_Inc_GBP-24-99_01-05-2023_4.png,Office Supplies Inc,24.99,01/05/2023,sample_receipt.pdf,2,Complete,

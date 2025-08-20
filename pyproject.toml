@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "receipt-analyzer"
+version = "1.0.0"
+description = "Receipt detection and processing application with OCR and GUI"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "pymupdf>=1.23.0",
+    "pillow>=9.0.0", 
+    "pytesseract>=0.3.10",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+full = [
+    "pdf2image>=3.1.0",
+    "opencv-python-headless>=4.8.0",
+]
+test = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+]
+build = [
+    "pyinstaller>=5.0.0",
+]
+
+[project.scripts]
+receipt-analyzer = "receipt_analyzer.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["receipt_analyzer*"]
+
+[tool.pytest.ini_options]
+testpaths = ["receipt_analyzer/tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"

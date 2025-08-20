@@ -1,0 +1,9 @@
+﻿Receipt File,Vendor,Amount,Date,PDF Source,Page,Status,Notes
+page_1/Unknown_Vendor_GBP-0-00_20-08-2025.png,Unknown_Vendor,0.00,20/08/2025,1097986001_expense_30712700.pdf,1,Incomplete,Missing: amount
+page_1/Unknown_Vendor_GBP-0-00_20-08-2025_2.png,Unknown_Vendor,0.00,20/08/2025,1097986001_expense_30712700.pdf,1,Incomplete,Missing: amount
+page_1/Unknown_Vendor_GBP-0-00_20-08-2025_3.png,Unknown_Vendor,0.00,20/08/2025,1097986001_expense_30712700.pdf,1,Incomplete,Missing: amount
+page_2/ASDA_GBP-407-00_23-06-2025.png,ASDA,407.00,23/06/2025,1097986001_expense_30712700.pdf,2,Complete,
+page_1/Ores_Seen_Murano_Eanasino_GBP-0-00_20-08-2025.png,Ores Seen Murano Eanasino,0.00,20/08/2025,sample_receipt.pdf,1,Incomplete,Missing: amount
+page_2/Office_Supplies_Inc_GBP-24-99_01-05-2023.png,Office Supplies Inc,24.99,01/05/2023,sample_receipt.pdf,2,Complete,
+page_1/Ores_Seen_Murano_Eanasino_GBP-0-00_20-08-2025_2.png,Ores Seen Murano Eanasino,0.00,20/08/2025,sample_receipt.pdf,1,Incomplete,Missing: amount
+page_2/Office_Supplies_Inc_GBP-24-99_01-05-2023_2.png,Office Supplies Inc,24.99,01/05/2023,sample_receipt.pdf,2,Complete,

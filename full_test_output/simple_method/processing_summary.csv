@@ -1,0 +1,20 @@
+﻿Processing Summary
+Total Records,7
+Successful Records,6
+Success Rate,85.7%
+Total Amount,£1458.46
+
+Extraction Methods
+Method,Count
+amount_largest amount: 24.99,2
+amount_largest amount: 297.24,2
+amount_largest amount: 407 GBP,2
+date_most recent date: 01/05/2023,4
+date_most recent date: 23/06/2025,2
+vendor_first clean line,4
+vendor_keyword mapping,2
+
+PDF Statistics
+PDF File,Total Receipts,Successful,Success Rate,Total Amount
+1097986001_expense_30712700.pdf,3,2,66.7%,£814.00
+sample_receipt.pdf,4,4,100.0%,£644.46

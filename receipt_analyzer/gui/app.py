@@ -42,6 +42,7 @@ class ReceiptAnalyzerApp:
         self.cancel_processing = False
         self.progress_count = 0
         self.total_count = 0
+        self.worker_queue = None  # Will be set to queue.Queue() during processing
         
         # Initialize logging with GUI stream
         init_logger(log_stream=self.log_stream)
@@ -309,55 +310,194 @@ Built with Python, PyMuPDF, Tesseract OCR, OpenCV, and Tkinter."""
             self.is_processing = is_processing
     
     def start_processing(self, input_dir: Path, output_dir: Path):
-        """Start processing in a separate thread."""
+        """
+        Start processing in a background thread using a queue for communication.
+        All blocking work is done in the worker thread. The main thread polls the queue and updates the GUI.
+        """
         if self.is_processing:
             return
-        
-        # Reset cancellation flag
+
+        import queue
+        self.worker_queue = queue.Queue()
         self.cancel_processing = False
-        
-        # Set progress counters
         self.progress_count = 0
         self.total_count = 0
-        
-        # Count PDF files for progress tracking
-        try:
-            from ..core.pdf_io import find_pdf_files
-            pdf_files = find_pdf_files(input_dir)
-            self.total_count = len(pdf_files)
-        except Exception:
-            self.total_count = 0
+        self.set_processing_state(True)
 
         # Update config from GUI BEFORE starting the background thread
         self.update_config_from_gui()
-        
-        self.set_processing_state(True)
-        
+
         # Show busy cursor for the entire application
         self.root.config(cursor="watch")
         for tab in self.tabs.values():
             if hasattr(tab, 'frame'):
                 tab.frame.config(cursor="watch")
-        
-        # Create and start processing thread
+
+        # Start the worker thread
         self.processing_thread = threading.Thread(
-            target=self._process_files,
-            args=(input_dir, output_dir),
+            target=self._worker_process,
+            args=(input_dir, output_dir, self.worker_queue),
             daemon=True
         )
         self.processing_thread.start()
-        
-        # Show processing status dialog (with error handling)
+
+        # Show processing status dialog
         try:
             self.processing_dialog = ProcessingStatusDialog(self.root, self)
             self.processing_dialog.show()
-            
-            # Update processing dialog
-            self.root.after(1000, self.check_processing_status)
         except Exception as e:
-            # If dialog fails, continue without it but log the error
             get_logger().warn(f"Failed to create processing dialog: {e}")
             self.processing_dialog = None
+
+        # Start polling the queue for updates
+        self.root.after(200, self._poll_worker_queue)
+
+    def _poll_worker_queue(self):
+        """
+        Poll the worker queue for messages and update the GUI accordingly.
+        This runs in the main thread via .after().
+        """
+        if not self.is_processing or not self.worker_queue:
+            return
+        try:
+            while True:
+                msg = self.worker_queue.get_nowait()
+                self._handle_worker_message(msg)
+        except Exception:
+            pass  # queue.Empty or other benign errors
+        # Continue polling if still processing
+        if self.is_processing:
+            self.root.after(200, self._poll_worker_queue)
+
+    def _handle_worker_message(self, msg):
+        """
+        Handle a message from the worker thread.
+        Message is a tuple: (type, data)
+        """
+        msg_type, data = msg
+        if msg_type == "progress":
+            self.progress_count, self.total_count = data
+            if self.processing_dialog:
+                self.processing_dialog.progress_var.set(
+                    (self.progress_count / max(1, self.total_count)) * 100)
+                self.processing_dialog.status_var.set(
+                    f"Processing file {self.progress_count}/{self.total_count}")
+        elif msg_type == "file":
+            if self.processing_dialog:
+                self.processing_dialog.file_var.set(data)
+        elif msg_type == "detail":
+            if self.processing_dialog:
+                self.processing_dialog.add_detail(data)
+        elif msg_type == "status":
+            self.status_var.set(data)
+        elif msg_type == "done":
+            self._processing_complete(data)
+        elif msg_type == "cancelled":
+            self._processing_cancelled()
+        elif msg_type == "error":
+            self._processing_error(data)
+
+    def _processing_complete(self, summary):
+        self.set_processing_state(False)
+        if self.processing_dialog:
+            self.processing_dialog.close()
+        self.root.config(cursor="")
+        for tab in self.tabs.values():
+            if hasattr(tab, 'frame'):
+                tab.frame.config(cursor="")
+        # Show completion message after dialog closes
+        self.root.after(100, lambda: messagebox.showinfo(
+            "Processing Complete",
+            summary
+        ))
+
+    def _processing_cancelled(self):
+        self.set_processing_state(False)
+        if self.processing_dialog:
+            self.processing_dialog.close()
+        self.root.config(cursor="")
+        for tab in self.tabs.values():
+            if hasattr(tab, 'frame'):
+                tab.frame.config(cursor="")
+        self.root.after(100, lambda: messagebox.showinfo(
+            "Processing Cancelled",
+            "Processing was cancelled by the user."
+        ))
+
+    def _processing_error(self, error_msg):
+        self.set_processing_state(False)
+        if self.processing_dialog:
+            self.processing_dialog.close()
+        self.root.config(cursor="")
+        for tab in self.tabs.values():
+            if hasattr(tab, 'frame'):
+                tab.frame.config(cursor="")
+        self.root.after(100, lambda: messagebox.showerror(
+            "Processing Error",
+            error_msg
+        ))
+
+    def stop_processing(self):
+        """Request cancellation of the current processing."""
+        if not self.is_processing:
+            return
+        self.cancel_processing = True
+        # UI update: show cancelling status
+        self.status_var.set("Cancelling processing...")
+        if 'input_run' in self.tabs:
+            self.tabs['input_run'].progress_text_var.set("Cancelling...")
+        # The worker thread will check cancel_processing and send a 'cancelled' message
+
+    def _worker_process(self, input_dir: Path, output_dir: Path, q):
+        """
+        Worker thread: does all blocking work and communicates with the GUI via queue.
+        Never calls Tkinter widgets or messagebox directly.
+        """
+        try:
+            from ..core.processing import process_pdf_files
+            from ..core.pdf_io import find_pdf_files
+            import traceback
+
+            # Find PDF files (blocking)
+            try:
+                pdf_files = find_pdf_files(input_dir)
+            except Exception as e:
+                q.put(("error", f"Error finding PDF files: {e}"))
+                return
+            if not pdf_files:
+                q.put(("error", f"No PDF files found in {input_dir}"))
+                return
+            q.put(("detail", f"Found {len(pdf_files)} PDF files to process"))
+            q.put(("progress", (0, len(pdf_files))))
+
+            total_receipts = 0
+            success_count = 0
+            for i, pdf_path in enumerate(pdf_files):
+                if self.cancel_processing:
+                    q.put(("cancelled", None))
+                    return
+                q.put(("progress", (i+1, len(pdf_files))))
+                q.put(("file", pdf_path.name))
+                q.put(("detail", f"Processing file {i+1}/{len(pdf_files)}: {pdf_path.name}"))
+                try:
+                    receipt_count = process_pdf_files([pdf_path], output_dir, self.config, self.vendor_map)
+                    if receipt_count > 0:
+                        success_count += 1
+                        total_receipts += receipt_count
+                        q.put(("detail", f"Extracted {receipt_count} receipts from {pdf_path.name}"))
+                except Exception as e:
+                    q.put(("detail", f"Error processing {pdf_path.name}: {e}"))
+            if self.cancel_processing:
+                q.put(("cancelled", None))
+                return
+            summary = (
+                f"Processing completed!\n\n"
+                f"Files processed: {success_count}/{len(pdf_files)}\n"
+                f"Total receipts: {total_receipts}\n"
+            )
+            q.put(("done", summary))
+        except Exception as e:
+            q.put(("error", f"Unexpected error: {e}"))
     
     def stop_processing(self):
         """Stop the current processing."""

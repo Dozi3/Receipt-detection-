@@ -14,49 +14,43 @@ class ProcessingStatusDialog:
         self.parent = parent
         self.app = app
         self.dialog = None
-        self.update_thread = None
-        self.should_close = False
+    # No update thread; all updates are now done from the main thread via queue polling
         
     def show(self):
         """Show the dialog."""
         if self.dialog:
             return  # Dialog already showing
-            
+
         # Create dialog window
         self.dialog = tk.Toplevel(self.parent)
         self.dialog.title("Processing Status")
         self.dialog.geometry("500x300")
         self.dialog.minsize(400, 250)
         self.dialog.transient(self.parent)
-        self.dialog.grab_set()
-        
-        # Make it modal
+        # Optionally make modal, but do not use grab_set to avoid deadlocks with messageboxes
         self.dialog.focus_set()
-        
+
         # Set position relative to parent
         parent_x = self.parent.winfo_rootx()
         parent_y = self.parent.winfo_rooty()
         parent_width = self.parent.winfo_width()
         parent_height = self.parent.winfo_height()
-        
+
         dialog_width = 500
         dialog_height = 300
-        
+
         x = parent_x + (parent_width - dialog_width) // 2
         y = parent_y + (parent_height - dialog_height) // 2
-        
+
         self.dialog.geometry(f"+{x}+{y}")
-        
+
         # Set up UI
         self.setup_ui()
-        
+
         # Handle close button
         self.dialog.protocol("WM_DELETE_WINDOW", self.on_close)
-        
-        # Start update thread
-        self.should_close = False
-        self.update_thread = threading.Thread(target=self.update_loop, daemon=True)
-        self.update_thread.start()
+
+        # No update thread; dialog is updated from main thread via queue polling
         
     def setup_ui(self):
         """Set up the dialog UI."""
@@ -145,33 +139,7 @@ class ProcessingStatusDialog:
             # Dialog might be destroyed
             pass
     
-    def update_loop(self):
-        """Background thread to update the dialog."""
-        while not self.should_close:
-            try:
-                # Update progress information from the app
-                if self.app.is_processing:
-                    # Calculate progress percentage
-                    if self.app.total_count > 0:
-                        progress = (self.app.progress_count / self.app.total_count) * 100
-                        self.dialog.after(0, lambda p=progress: self.progress_var.set(p))
-                        
-                        # Update status text
-                        status_text = f"Processing file {self.app.progress_count}/{self.app.total_count}"
-                        self.dialog.after(0, lambda t=status_text: self.status_var.set(t))
-                    
-                    # Check if processing is done
-                    if self.app.processing_thread and not self.app.processing_thread.is_alive():
-                        self.dialog.after(0, self.close)
-                else:
-                    # Processing is done, close dialog
-                    self.dialog.after(0, self.close)
-            except Exception:
-                # Ignore errors during updates
-                pass
-                
-            # Sleep a bit to avoid high CPU usage
-            time.sleep(0.2)
+    # No update_loop needed; dialog is updated from main thread via queue polling
     
     def cancel_processing(self):
         """Cancel the processing operation."""

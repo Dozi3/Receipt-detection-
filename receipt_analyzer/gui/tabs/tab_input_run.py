@@ -293,13 +293,12 @@ class InputRunTab:
         self.status_text.config(state=tk.DISABLED)
     
     def set_processing_state(self, is_processing: bool):
-        """Update the processing state."""
+        """Update the processing state (called from main thread)."""
         if is_processing:
             self.run_button.config(state=tk.DISABLED)
             self.stop_button.config(state=tk.NORMAL)
             self.progress_bar["value"] = 0
             self.progress_bar["mode"] = "determinate"
-            
             # Disable input fields during processing
             self.input_dir_entry.config(state=tk.DISABLED)
             self.output_dir_entry.config(state=tk.DISABLED)
@@ -308,7 +307,6 @@ class InputRunTab:
             self.stop_button.config(state=tk.DISABLED)
             self.progress_bar["value"] = 0
             self.progress_text_var.set("Processing complete")
-            
             # Re-enable input fields
             self.input_dir_entry.config(state=tk.NORMAL)
             self.output_dir_entry.config(state=tk.NORMAL)

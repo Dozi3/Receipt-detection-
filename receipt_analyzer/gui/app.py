@@ -246,7 +246,13 @@ class ReceiptAnalyzerApp:
             # Update config from all tabs
             for tab in self.tabs.values():
                 if hasattr(tab, 'update_config'):
-                    tab.update_config(self.config)
+                    # Check if the method takes config parameter
+                    import inspect
+                    sig = inspect.signature(tab.update_config)
+                    if len(sig.parameters) > 0:  # Takes config parameter
+                        tab.update_config(self.config)
+                    else:  # No config parameter
+                        tab.update_config()
         except Exception as e:
             get_logger().warn(f"Error updating config from GUI: {e}")
     
@@ -284,7 +290,10 @@ class ReceiptAnalyzerApp:
         self.set_processing_state(True)
 
         # Update config from GUI BEFORE starting the background thread
-        self.update_config_from_gui()
+        try:
+            self.update_config_from_gui()
+        except Exception as e:
+            get_logger().warn(f"Failed to update config from GUI: {e}")
 
         # Show busy cursor for the entire application
         self.root.config(cursor="watch")
@@ -318,11 +327,16 @@ class ReceiptAnalyzerApp:
             
         try:
             # Process all available messages
+            message_count = 0
             while True:
-                msg = self.worker_queue.get_nowait()
-                self._handle_worker_message(msg)
-        except queue.Empty:
-            pass  # No more messages
+                try:
+                    msg = self.worker_queue.get_nowait()
+                    self._handle_worker_message(msg)
+                    message_count += 1
+                    if message_count > 50:  # Prevent infinite loop
+                        break
+                except queue.Empty:
+                    break  # No more messages
         except Exception as e:
             get_logger().warn(f"Error processing worker message: {e}")
         
@@ -331,7 +345,10 @@ class ReceiptAnalyzerApp:
             still_processing = self.is_processing
         
         if still_processing:
-            self.root.after(100, self._poll_worker_queue)
+            # Use a shorter interval for more responsive UI
+            self.root.after(50, self._poll_worker_queue)
+        else:
+            get_logger().debug("Stopping queue polling - processing complete")
 
     def _handle_worker_message(self, msg: tuple):
         """Handle a message from the worker thread."""
@@ -371,9 +388,15 @@ class ReceiptAnalyzerApp:
 
     def _processing_complete(self, summary: Dict[str, Any]):
         """Handle processing completion."""
+        get_logger().debug("Processing completion handler called")
+        
         self.set_processing_state(False)
+        
         if self.processing_dialog:
-            self.processing_dialog.close()
+            try:
+                self.processing_dialog.close()
+            except Exception as e:
+                get_logger().warn(f"Error closing processing dialog: {e}")
             
         self._reset_cursor()
         
@@ -385,27 +408,39 @@ class ReceiptAnalyzerApp:
             f"Output saved to: {summary.get('output_dir', '')}"
         )
         
-        # Show completion message after dialog closes
-        self.root.after(100, lambda: messagebox.showinfo("Processing Complete", message))
+        # Show completion message after a brief delay to ensure dialog closes
+        self.root.after(200, lambda: messagebox.showinfo("Processing Complete", message))
 
     def _processing_cancelled(self):
         """Handle processing cancellation."""
+        get_logger().debug("Processing cancellation handler called")
+        
         self.set_processing_state(False)
+        
         if self.processing_dialog:
-            self.processing_dialog.close()
+            try:
+                self.processing_dialog.close()
+            except Exception as e:
+                get_logger().warn(f"Error closing processing dialog: {e}")
             
         self._reset_cursor()
         
-        self.root.after(100, lambda: messagebox.showinfo(
+        self.root.after(200, lambda: messagebox.showinfo(
             "Processing Cancelled",
             "Processing was cancelled by the user."
         ))
 
     def _processing_error(self, error_data):
         """Handle processing error."""
+        get_logger().debug("Processing error handler called")
+        
         self.set_processing_state(False)
+        
         if self.processing_dialog:
-            self.processing_dialog.close()
+            try:
+                self.processing_dialog.close()
+            except Exception as e:
+                get_logger().warn(f"Error closing processing dialog: {e}")
             
         self._reset_cursor()
         
@@ -417,7 +452,7 @@ class ReceiptAnalyzerApp:
             show_dialog = True
             
         if show_dialog:
-            self.root.after(100, lambda: messagebox.showerror("Processing Error", message))
+            self.root.after(200, lambda: messagebox.showerror("Processing Error", message))
 
     def _reset_cursor(self):
         """Reset cursor for all widgets."""
@@ -447,6 +482,8 @@ class ReceiptAnalyzerApp:
             from ..core.processing import process_pdf_files
             from ..core.pdf_io import find_pdf_files
             
+            get_logger().debug(f"Worker process started: input={input_dir}, output={output_dir}")
+            
             # Find PDF files
             pdf_files = find_pdf_files(input_dir)
             if not pdf_files:
@@ -457,6 +494,7 @@ class ReceiptAnalyzerApp:
             # Send initial status
             self.worker_queue.put(("status", f"Processing {len(pdf_files)} PDF files..."))
             self.worker_queue.put(("detail", f"Found {len(pdf_files)} PDF files to process"))
+            get_logger().debug(f"Found {len(pdf_files)} PDF files to process")
             
             # Process files
             total_receipts = 0
@@ -472,14 +510,18 @@ class ReceiptAnalyzerApp:
                     return
                     
                 try:
+                    get_logger().debug(f"Starting to process file {i+1}/{len(pdf_files)}: {pdf_path.name}")
+                    
                     # Update progress
                     self.worker_queue.put(("progress", (i + 1, len(pdf_files))))
                     self.worker_queue.put(("status", f"Processing file {i+1}/{len(pdf_files)}: {pdf_path.name}"))
                     self.worker_queue.put(("file", pdf_path.name))
                     self.worker_queue.put(("detail", f"Processing file {i+1}/{len(pdf_files)}: {pdf_path.name}"))
                     
-                    # Process file
+                    # Process file with error handling
+                    get_logger().debug(f"Calling process_pdf_files for {pdf_path.name}")
                     receipt_count = process_pdf_files([pdf_path], output_dir, self.config, self.vendor_map)
+                    get_logger().debug(f"Finished process_pdf_files for {pdf_path.name}, got {receipt_count} receipts")
                     
                     if receipt_count > 0:
                         success_count += 1
@@ -489,9 +531,11 @@ class ReceiptAnalyzerApp:
                         self.worker_queue.put(("detail", f"⚠️ {pdf_path.name}: No receipts found"))
                         
                 except Exception as e:
+                    import traceback
                     error_msg = f"❌ Error processing {pdf_path.name}: {str(e)}"
+                    tb = traceback.format_exc()
+                    get_logger().error(f"{error_msg}\nTraceback: {tb}")
                     self.worker_queue.put(("detail", error_msg))
-                    get_logger().error(error_msg)
             
             # Check for final cancellation
             with self.state_lock:
@@ -509,11 +553,16 @@ class ReceiptAnalyzerApp:
             }
             
             self.worker_queue.put(("done", summary))
+            get_logger().debug("Worker process completed successfully")
             
         except Exception as e:
+            import traceback
             error_msg = f"Critical error during processing: {str(e)}"
-            get_logger().error(error_msg)
+            tb = traceback.format_exc()
+            get_logger().error(f"{error_msg}\nTraceback: {tb}")
             self.worker_queue.put(("error", {"message": error_msg, "show_dialog": True}))
+        finally:
+            get_logger().debug("Worker process finished (finally block)")
 
     def check_processing_status(self):
         """Check if processing is still running and update UI accordingly."""

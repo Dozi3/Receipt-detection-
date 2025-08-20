@@ -10,10 +10,10 @@ from typing import Optional, Dict, Any, List
 @dataclass
 class OpenCVConfig:
     """OpenCV detection parameters."""
-    min_area_ratio: float = 0.01
-    max_area_ratio: float = 0.9
-    min_aspect: float = 0.3
-    max_aspect: float = 4.0
+    min_area_ratio: float = 0.005  # More permissive - allow smaller receipts
+    max_area_ratio: float = 0.98   # More permissive - allow larger receipts
+    min_aspect: float = 0.1        # More permissive - allow very tall receipts  
+    max_aspect: float = 10.0       # More permissive - allow very wide receipts
     quad_epsilon: float = 0.02
     canny1: int = 50
     canny2: int = 140

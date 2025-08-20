@@ -101,24 +101,84 @@ def cv2_to_pil(cv2_image: np.ndarray) -> Image.Image:
 def preprocess_image(image: np.ndarray, config: OpenCVConfig) -> np.ndarray:
     """Preprocess image for contour detection."""
     import cv2
+    from .logging_utils import get_logger, log_debug
     
-    # Convert to grayscale
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    logger = get_logger()
     
-    # Apply Gaussian blur
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    
-    # Apply Canny edge detection with default values if not specified
-    canny1 = getattr(config, 'canny1', 50)
-    canny2 = getattr(config, 'canny2', 150)
-    edges = cv2.Canny(blurred, canny1, canny2)
-    
-    # Apply morphological closing to fill gaps
-    morph_close = getattr(config, 'morph_close', 5)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (morph_close, morph_close))
-    closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
-    
-    return closed
+    try:
+        # Validate input image
+        if image is None or image.size == 0:
+            raise ValueError("Input image is empty or None")
+        
+        logger.debug(f"Preprocessing image shape: {image.shape}")
+        
+        # Convert to grayscale
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            logger.debug("Converted to grayscale")
+        else:
+            gray = image.copy()
+            logger.debug("Image already grayscale")
+        
+        # Validate grayscale conversion
+        if gray is None or gray.size == 0:
+            raise ValueError("Grayscale conversion failed")
+        
+        # Apply Gaussian blur with validation
+        try:
+            blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+            if blurred is None or blurred.size == 0:
+                logger.debug("Gaussian blur failed, using original grayscale")
+                blurred = gray
+        except Exception as e:
+            logger.debug(f"Gaussian blur error: {e}, using original grayscale")
+            blurred = gray
+        
+        # Apply Canny edge detection with default values if not specified
+        canny1 = getattr(config, 'canny1', 50)
+        canny2 = getattr(config, 'canny2', 150)
+        
+        try:
+            edges = cv2.Canny(blurred, canny1, canny2)
+            if edges is None or edges.size == 0:
+                logger.debug("Canny edge detection failed, using blurred image")
+                edges = blurred
+        except Exception as e:
+            logger.debug(f"Canny edge detection error: {e}, using blurred image")
+            edges = blurred
+        
+        # Apply morphological closing to fill gaps
+        morph_close = getattr(config, 'morph_close', 5)
+        
+        try:
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (morph_close, morph_close))
+            closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+            if closed is None or closed.size == 0:
+                logger.debug("Morphological closing failed, using edges")
+                closed = edges
+        except Exception as e:
+            logger.debug(f"Morphological closing error: {e}, using edges")
+            closed = edges
+        
+        logger.debug(f"Preprocessed image shape: {closed.shape}")
+        return closed
+        
+    except Exception as e:
+        logger.debug(f"Image preprocessing error: {e}")
+        # Return a fallback - try to create a simple thresholded version
+        try:
+            if len(image.shape) == 3:
+                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            else:
+                gray = image
+            _, thresh = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
+            logger.debug("Using simple threshold as fallback")
+            return thresh
+        except:
+            # Ultimate fallback - return the original image converted to grayscale
+            if len(image.shape) == 3:
+                return image[:, :, 0]  # Use first channel
+            return image
 
 
 def find_receipt_contours(processed_image: np.ndarray, original_shape: Tuple[int, int], 
@@ -139,24 +199,35 @@ def find_receipt_contours(processed_image: np.ndarray, original_shape: Tuple[int
     
     for i, contour in enumerate(contours):
         try:
-            # Approximate contour to polygon
-            # Use epsilon_factor or quad_epsilon based on what's available in config
+            # Skip very small contours early
+            area = cv2.contourArea(contour)
+            if area < 100:  # Skip tiny contours
+                continue
+                
+            # Try multiple epsilon values to find quadrilaterals
             epsilon_factor = getattr(config, 'quad_epsilon', getattr(config, 'epsilon_factor', 0.02))
-            epsilon = epsilon_factor * cv2.arcLength(contour, True)
-            approx = cv2.approxPolyDP(contour, epsilon, True)
+            epsilon_values = [epsilon_factor, epsilon_factor * 1.5, epsilon_factor * 2.0, epsilon_factor * 3.0]
+            
+            approx = None
+            for eps_mult in epsilon_values:
+                epsilon = eps_mult * cv2.arcLength(contour, True)
+                test_approx = cv2.approxPolyDP(contour, epsilon, True)
+                if len(test_approx) == 4:
+                    approx = test_approx
+                    log_debug(f"Contour {i}: Found quad with epsilon factor {eps_mult:.1f}")
+                    break
             
             # Only consider quadrilaterals
-            if len(approx) != 4:
-                log_debug(f"Contour {i}: Skipping non-quadrilateral with {len(approx)} points")
+            if approx is None or len(approx) != 4:
+                log_debug(f"Contour {i}: Skipping non-quadrilateral with {len(approx) if approx is not None else 'unknown'} points")
                 continue
             
-            # Calculate area and aspect ratio
-            area = cv2.contourArea(contour)
+            # Calculate area ratio
             area_ratio = area / image_area
             
-            # Get area ratio thresholds with defaults
-            min_area_ratio = getattr(config, 'min_area_ratio', 0.01)
-            max_area_ratio = getattr(config, 'max_area_ratio', 0.95)
+            # Get area ratio thresholds with defaults - make them more permissive
+            min_area_ratio = getattr(config, 'min_area_ratio', 0.005)  # More permissive minimum
+            max_area_ratio = getattr(config, 'max_area_ratio', 0.98)   # More permissive maximum
             
             # Filter by area
             if area_ratio < min_area_ratio or area_ratio > max_area_ratio:
@@ -167,9 +238,9 @@ def find_receipt_contours(processed_image: np.ndarray, original_shape: Tuple[int
             x, y, w, h = cv2.boundingRect(contour)
             aspect_ratio = w / h if h > 0 else 0
             
-            # Get aspect ratio thresholds with defaults
-            min_aspect = getattr(config, 'min_aspect', 0.2)
-            max_aspect = getattr(config, 'max_aspect', 5.0)
+            # Get aspect ratio thresholds with defaults - make them more permissive
+            min_aspect = getattr(config, 'min_aspect', 0.1)   # More permissive for tall receipts
+            max_aspect = getattr(config, 'max_aspect', 10.0)  # More permissive for wide receipts
             
             # Filter by aspect ratio
             if aspect_ratio < min_aspect or aspect_ratio > max_aspect:
@@ -180,6 +251,7 @@ def find_receipt_contours(processed_image: np.ndarray, original_shape: Tuple[int
             receipt_contours.append(approx.reshape(-1, 2))
         except Exception as e:
             log_debug(f"Error processing contour {i}: {e}")
+            continue  # Don't let one bad contour break the whole process
     
     log_debug(f"Found {len(receipt_contours)} valid receipt contours")
     return receipt_contours
@@ -187,21 +259,39 @@ def find_receipt_contours(processed_image: np.ndarray, original_shape: Tuple[int
 
 def order_quad_points(quad: np.ndarray) -> np.ndarray:
     """Order quad points as top-left, top-right, bottom-right, bottom-left."""
-    # Sum and difference of coordinates to find corners
-    sums = quad.sum(axis=1)
-    diffs = np.diff(quad, axis=1)
-    
-    ordered = np.zeros((4, 2), dtype=np.float32)
-    
-    # Top-left has minimum sum, bottom-right has maximum sum
-    ordered[0] = quad[np.argmin(sums)]  # top-left
-    ordered[2] = quad[np.argmax(sums)]  # bottom-right
-    
-    # Top-right has minimum difference, bottom-left has maximum difference
-    ordered[1] = quad[np.argmin(diffs)]  # top-right
-    ordered[3] = quad[np.argmax(diffs)]  # bottom-left
-    
-    return ordered
+    try:
+        # Validate input
+        if quad is None or quad.size == 0 or quad.shape[0] != 4:
+            raise ValueError(f"Invalid quad shape: {quad.shape if quad is not None else None}")
+        
+        # Ensure we have float32 for calculations
+        quad_float = quad.astype(np.float32)
+        
+        # Check for finite values
+        if not np.all(np.isfinite(quad_float)):
+            raise ValueError("Quad contains infinite or NaN values")
+        
+        # Sum and difference of coordinates to find corners
+        sums = quad_float.sum(axis=1)
+        diffs = np.diff(quad_float, axis=1).flatten()
+        
+        ordered = np.zeros((4, 2), dtype=np.float32)
+        
+        # Top-left has minimum sum, bottom-right has maximum sum
+        ordered[0] = quad_float[np.argmin(sums)]  # top-left
+        ordered[2] = quad_float[np.argmax(sums)]  # bottom-right
+        
+        # Top-right has minimum difference, bottom-left has maximum difference
+        ordered[1] = quad_float[np.argmin(diffs)]  # top-right
+        ordered[3] = quad_float[np.argmax(diffs)]  # bottom-left
+        
+        return ordered
+        
+    except Exception as e:
+        from .logging_utils import log_debug
+        log_debug(f"Error ordering quad points: {e}")
+        # Return a default square as fallback
+        return np.array([[0, 0], [100, 0], [100, 100], [0, 100]], dtype=np.float32)
 
 
 def apply_perspective_transform(image: np.ndarray, quad: np.ndarray, 
@@ -211,43 +301,116 @@ def apply_perspective_transform(image: np.ndarray, quad: np.ndarray,
     from .logging_utils import log_debug
     
     try:
+        # Validate inputs
+        if image is None or image.size == 0:
+            log_debug("apply_perspective_transform: Input image is None or empty")
+            return None
+            
+        if quad is None or quad.size == 0:
+            log_debug("apply_perspective_transform: Input quad is None or empty")
+            return None
+        
         # Check if quad has exactly 4 points
         if quad.shape[0] != 4:
             log_debug(f"Invalid quad shape: {quad.shape}, expected (4, 2)")
             return None
         
-        # Order the quad points
-        ordered_quad = order_quad_points(quad.astype(np.float32))
-        
-        # Calculate output dimensions
-        width_top = np.sqrt(((ordered_quad[1][0] - ordered_quad[0][0]) ** 2) + 
-                           ((ordered_quad[1][1] - ordered_quad[0][1]) ** 2))
-        width_bottom = np.sqrt(((ordered_quad[2][0] - ordered_quad[3][0]) ** 2) + 
-                              ((ordered_quad[2][1] - ordered_quad[3][1]) ** 2))
-        width = max(int(width_top), int(width_bottom))
-        
-        height_left = np.sqrt(((ordered_quad[3][0] - ordered_quad[0][0]) ** 2) + 
-                             ((ordered_quad[3][1] - ordered_quad[0][1]) ** 2))
-        height_right = np.sqrt(((ordered_quad[2][0] - ordered_quad[1][0]) ** 2) + 
-                              ((ordered_quad[2][1] - ordered_quad[1][1]) ** 2))
-        height = max(int(height_left), int(height_right))
-        
-        # Validate width and height
-        if width <= 0 or height <= 0:
-            log_debug(f"Invalid dimensions for warping: {width}x{height}")
+        # Validate quad points are finite
+        if not np.all(np.isfinite(quad)):
+            log_debug("Quad contains infinite or NaN values")
             return None
+        
+        # Order the quad points
+        try:
+            ordered_quad = order_quad_points(quad.astype(np.float32))
+        except Exception as e:
+            log_debug(f"Error ordering quad points: {e}")
+            return None
+        
+        # Calculate output dimensions with safety checks
+        def safe_distance(p1, p2):
+            """Calculate distance between two points safely."""
+            try:
+                dx = float(p1[0] - p2[0])
+                dy = float(p1[1] - p2[1])
+                return max(1.0, np.sqrt(dx * dx + dy * dy))  # Minimum 1 pixel
+            except:
+                return 100.0  # Default fallback
+        
+        width_top = safe_distance(ordered_quad[1], ordered_quad[0])
+        width_bottom = safe_distance(ordered_quad[2], ordered_quad[3])
+        width = max(int(width_top), int(width_bottom), 10)  # Minimum 10 pixels
+        
+        height_left = safe_distance(ordered_quad[3], ordered_quad[0])
+        height_right = safe_distance(ordered_quad[2], ordered_quad[1])
+        height = max(int(height_left), int(height_right), 10)  # Minimum 10 pixels
         
         # Limit the size to warp_long_edge_px
         warp_long_edge_px = getattr(config, 'warp_long_edge_px', 1600)
         
         if width > height:
             if width > warp_long_edge_px:
-                height = int(height * warp_long_edge_px / width)
+                height = max(1, int(height * warp_long_edge_px / width))
                 width = warp_long_edge_px
         else:
             if height > warp_long_edge_px:
-                width = int(width * warp_long_edge_px / height)
+                width = max(1, int(width * warp_long_edge_px / height))
                 height = warp_long_edge_px
+        
+        # Final dimension validation
+        if width <= 0 or height <= 0 or width > 10000 or height > 10000:
+            log_debug(f"Invalid or extreme dimensions: {width}x{height}")
+            return None
+        
+        # Define destination points
+        dst_points = np.array([
+            [0, 0],
+            [width - 1, 0],
+            [width - 1, height - 1],
+            [0, height - 1]
+        ], dtype=np.float32)
+        
+        # Calculate perspective transform matrix with error handling
+        try:
+            matrix = cv2.getPerspectiveTransform(ordered_quad, dst_points)
+            if matrix is None:
+                log_debug("getPerspectiveTransform returned None")
+                return None
+        except Exception as e:
+            log_debug(f"Error calculating perspective transform matrix: {e}")
+            return None
+        
+        # Apply transformation with error handling
+        try:
+            warped = cv2.warpPerspective(image, matrix, (width, height))
+        except Exception as e:
+            log_debug(f"Error applying warpPerspective: {e}")
+            return None
+        
+        # Validate output
+        if warped is None or warped.size == 0 or warped.shape[0] == 0 or warped.shape[1] == 0:
+            log_debug("Warping produced invalid image")
+            return None
+        
+        log_debug(f"Warped dimensions: {warped.shape[1]}x{warped.shape[0]}")
+        
+        # Add padding with error handling
+        pad_px = getattr(config, 'pad_px', 6)
+        if pad_px > 0:
+            try:
+                warped = cv2.copyMakeBorder(
+                    warped, pad_px, pad_px, pad_px, pad_px,
+                    cv2.BORDER_CONSTANT, value=[255, 255, 255]
+                )
+            except Exception as e:
+                log_debug(f"Error adding padding: {e}")
+                # Continue without padding if it fails
+        
+        return warped
+        
+    except Exception as e:
+        log_debug(f"Error in perspective transform: {e}")
+        return None
         
         # Double-check dimensions
         if width <= 0 or height <= 0:

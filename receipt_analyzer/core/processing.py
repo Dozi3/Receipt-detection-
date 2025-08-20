@@ -234,7 +234,8 @@ def process_receipt(image: Image.Image, config: Config, vendor_map: Optional[Ven
 
 
 def process_pdf_page(pdf_path: Path, page_num: int, config: Config, 
-                    vendor_map: Optional[VendorMap], output_dir: Path) -> List[ReceiptRecord]:
+                    vendor_map: Optional[VendorMap], output_dir: Path,
+                    cancellation_token=None) -> List[ReceiptRecord]:
     """
     Process a single PDF page and return receipt records.
     
@@ -244,6 +245,7 @@ def process_pdf_page(pdf_path: Path, page_num: int, config: Config,
         config: Configuration object
         vendor_map: Vendor mapping object
         output_dir: Output directory
+        cancellation_token: Optional cancellation token
     
     Returns:
         List of ReceiptRecord objects
@@ -252,11 +254,19 @@ def process_pdf_page(pdf_path: Path, page_num: int, config: Config,
     records = []
     
     try:
+        # Check for cancellation at start
+        if cancellation_token and cancellation_token.is_cancelled():
+            return records
+        
         # Get images from PDF page
         logger.debug(f"process_pdf_page: Processing {pdf_path}, page {page_num+1}")
-        images = get_page_images(pdf_path, page_num)
+        images = get_page_images(pdf_path, page_num, cancellation_token=cancellation_token)
         if not images:
             logger.warn(format_pdf_log(str(pdf_path), page_num + 1, "no images extracted from page"))
+            return records
+        
+        # Check for cancellation after image extraction
+        if cancellation_token and cancellation_token.is_cancelled():
             return records
         
         logger.debug(f"process_pdf_page: Extracted {len(images)} image(s) from page {page_num+1}")
@@ -296,6 +306,11 @@ def process_pdf_page(pdf_path: Path, page_num: int, config: Config,
         page_receipts = []
         for receipt_num, receipt_image in enumerate(receipt_images):
             try:
+                # Check for cancellation before each receipt
+                if cancellation_token and cancellation_token.is_cancelled():
+                    logger.debug("Processing cancelled during receipt processing")
+                    break
+                
                 # Validate image before processing
                 if receipt_image is None:
                     logger.warn(format_pdf_log(str(pdf_path), page_num + 1, 
@@ -411,7 +426,8 @@ def process_pdf_page(pdf_path: Path, page_num: int, config: Config,
 
 
 def process_pdf_files(pdf_files: List[Path], output_dir: Path, config: Config,
-                     vendor_map: Optional[VendorMap] = None) -> int:
+                     vendor_map: Optional[VendorMap] = None, 
+                     cancellation_token=None, progress_callback=None) -> int:
     """
     Process a list of PDF files.
     
@@ -420,11 +436,17 @@ def process_pdf_files(pdf_files: List[Path], output_dir: Path, config: Config,
         output_dir: Output directory
         config: Configuration object
         vendor_map: Optional vendor mapping object
+        cancellation_token: Optional cancellation token for early termination
+        progress_callback: Optional callback for progress updates
     
     Returns:
         Total number of receipts processed
     """
     logger = get_logger()
+    
+    # Check for cancellation at start
+    if cancellation_token and cancellation_token.is_cancelled():
+        return 0
     
     if vendor_map is None:
         vendor_map = load_vendor_map()
@@ -433,8 +455,17 @@ def process_pdf_files(pdf_files: List[Path], output_dir: Path, config: Config,
     total_receipts = 0
     
     # Process each PDF file
-    for pdf_path in pdf_files:
+    for pdf_index, pdf_path in enumerate(pdf_files):
         try:
+            # Check for cancellation before each file
+            if cancellation_token and cancellation_token.is_cancelled():
+                logger.debug("Processing cancelled by user")
+                break
+            
+            # Update progress
+            if progress_callback:
+                progress_callback.update(pdf_index, len(pdf_files), f"Processing {pdf_path.name}")
+            
             log_info(f"Processing {pdf_path.name}")
             logger.debug(f"process_pdf_files: Starting processing of {pdf_path}")
             
@@ -460,10 +491,15 @@ def process_pdf_files(pdf_files: List[Path], output_dir: Path, config: Config,
             
             # Process each page
             for page_num in range(page_count):
+                # Check for cancellation before each page
+                if cancellation_token and cancellation_token.is_cancelled():
+                    logger.debug("Processing cancelled during page processing")
+                    break
+                    
                 logger.debug(f"process_pdf_files: Processing page {page_num+1} of {page_count}")
                 try:
                     page_records = process_pdf_page(
-                        pdf_path, page_num, config, vendor_map, output_dir
+                        pdf_path, page_num, config, vendor_map, output_dir, cancellation_token
                     )
                     all_records.extend(page_records)
                     pdf_receipts += len(page_records)

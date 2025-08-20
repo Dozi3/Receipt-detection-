@@ -1,0 +1,26 @@
+{
+  "receipts": [
+    {
+      "file": "test_receipt_1.pdf",
+      "page": 1,
+      "receipt_id": 1,
+      "text": "Sample receipt text for testing",
+      "confidence": 0.95,
+      "method": "test"
+    },
+    {
+      "file": "test_receipt_2.pdf",
+      "page": 1,
+      "receipt_id": 1,
+      "text": "Another sample receipt with more text content",
+      "confidence": 0.87,
+      "method": "test"
+    }
+  ],
+  "summary": {
+    "total_files": 2,
+    "total_receipts": 2,
+    "processing_time": "5.2 seconds",
+    "method": "test"
+  }
+}

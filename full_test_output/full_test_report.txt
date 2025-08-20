@@ -1,0 +1,63 @@
+RECEIPT ANALYZER - COMPREHENSIVE FULL APPLICATION TEST REPORT
+======================================================================
+Test Date: 2025-08-20 14:16:25
+Test Duration: 56.4 seconds
+
+TEST SUMMARY
+------------------------------
+Total Test Phases: 9
+Passed Phases: 9
+Overall Success Rate: 100.0%
+
+DETAILED RESULTS
+------------------------------
+
+PHASE 1 DEPENDENCIES AND IMPORTS
+Status: ✅ PASSED
+  • result_1: True
+
+PHASE 2 CONFIGURATION
+Status: ✅ PASSED
+  • result_1: Config(detection_method='opencv', opencv=OpenCVConfig(min_area_ratio=0.005, max_area_ratio=0.98, min_aspect=0.1, max_aspect=10.0, quad_epsilon=0.02, canny1=50, canny2=140, morph_close=9, warp_long_edge_px=1600, pad_px=6), ocr=OCRConfig(language='eng', max_edge_px=1000, max_edge=1000, psm=6, oem=3), output=OutputConfig(format='png', jpeg_quality=85, per_page_zip=False, max_edge=1000), parsing=ParsingConfig(date_formats=['\\d{1,2}[/\\-\\.]\\d{1,2}[/\\-\\.]\\d{2,4}', '\\d{1,2}\\s+\\w{3,9}\\s+\\d{2,4}'], amount_patterns=['£\\s*\\d+\\.?\\d*', '\\d+\\.\\d{2}', '\\d{1,3}(?:,\\d{3})*\\.\\d{2}']), vendor_map_path=None)
+
+PHASE 3 SIMPLE DETECTION METHOD
+Status: ✅ PASSED
+  • result_1: 7
+  • result_2: 7
+  • result_3: 0
+
+PHASE 4 OPENCV DETECTION METHOD
+Status: ✅ PASSED
+  • result_1: 8
+  • result_2: 8
+  • result_3: 0
+
+PHASE 5 INDIVIDUAL DETECTION METHODS
+Status: ✅ PASSED
+  • result_1: 1
+  • result_2: 3
+
+PHASE 6 OCR FUNCTIONALITY
+Status: ✅ PASSED
+  • result_1: 0
+
+PHASE 7 EXPORT FUNCTIONALITY
+Status: ✅ PASSED
+  • result_1: {'json': True, 'txt': True, 'config': True}
+
+PHASE 8 ERROR HANDLING AND EDGE CASES
+Status: ✅ PASSED
+  • result_1: {'nonexistent_files': True, 'empty_list': True, 'cancellation': True, 'invalid_output': True}
+
+PHASE 9 RESOURCE MANAGEMENT
+Status: ✅ PASSED
+  • result_1: {'memory_monitoring': True, 'resource_tracking': True, 'threshold_warnings': True}
+
+OUTPUT FILES GENERATED
+------------------------------
+  • simple_method: 12 files
+  • opencv_method: 13 files
+  • export_tests: 3 files
+
+Test completed successfully!
+Full report saved to: /workspaces/Receipt-detection-/full_test_output/full_test_report.txt

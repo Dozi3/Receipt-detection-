@@ -139,6 +139,28 @@ class ProcessingStatusDialog:
             # Dialog might be destroyed
             pass
     
+    def update_progress(self, current: int, total: int):
+        """Update the progress bar and status."""
+        if not self.dialog:
+            return
+            
+        try:
+            progress_percent = (current / max(1, total)) * 100
+            self.progress_var.set(progress_percent)
+            self.status_var.set(f"Processing file {current}/{total}")
+        except tk.TclError:
+            pass
+    
+    def update_current_file(self, filename: str):
+        """Update the current file being processed."""
+        if not self.dialog:
+            return
+            
+        try:
+            self.file_var.set(filename)
+        except tk.TclError:
+            pass
+    
     # No update_loop needed; dialog is updated from main thread via queue polling
     
     def cancel_processing(self):

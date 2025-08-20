@@ -126,6 +126,12 @@ class ReceiptAnalyzerApp:
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.on_closing)
         
+        # Tools menu
+        tools_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Tools", menu=tools_menu)
+        tools_menu.add_command(label="Check Dependencies", command=self.check_dependencies)
+        tools_menu.add_command(label="Clear All Logs", command=self.clear_logs)
+        
         # Help menu
         help_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Help", menu=help_menu)
@@ -173,82 +179,144 @@ class ReceiptAnalyzerApp:
     
     def update_progress_indicator(self):
         """Update the progress indicator during processing."""
-        with self.state_lock:
-            progress_count = self.progress_count
-            total_count = self.total_count
-            
-        if total_count > 0:
-            progress_text = f"Processing file {progress_count}/{total_count}"
-            if 'input_run' in self.tabs:
-                self.tabs['input_run'].progress_text_var.set(progress_text)
+        if hasattr(self, 'progress_count') and hasattr(self, 'total_count'):
+            if self.total_count > 0:
+                progress_text = f"Processing file {self.progress_count}/{self.total_count}"
+                self.status_var.set(progress_text)
+                
+                # Update progress in input_run tab if it exists
+                if 'input_run' in self.tabs:
+                    progress_pct = (self.progress_count / self.total_count) * 100
+                    self.tabs['input_run'].update_progress(progress_pct, progress_text)
     
     def load_config_file(self):
-        """Load configuration from a file."""
-        filepath = filedialog.askopenfilename(
+        """Load configuration from file."""
+        filename = filedialog.askopenfilename(
             title="Load Configuration",
-            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
-            defaultextension=".json"
+            filetypes=[("YAML files", "*.yaml *.yml"), ("All files", "*.*")]
         )
         
-        if filepath:
-            try:
-                self.config = load_config(Path(filepath))
-                self.update_gui_from_config()
-                messagebox.showinfo("Success", "Configuration loaded successfully!")
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to load configuration:\n{str(e)}")
+        if filename:
+            def load_operation():
+                try:
+                    return load_config(Path(filename)), None
+                except Exception as e:
+                    return None, e
+            
+            def done_callback(result, error):
+                if error:
+                    messagebox.showerror("Error", f"Failed to load configuration:\n{error}")
+                else:
+                    self.config = result
+                    self.update_gui_from_config()
+                    messagebox.showinfo("Success", f"Configuration loaded from {filename}")
+            
+            # Run the operation with a busy indicator
+            run_with_busy_indicator(
+                self.root,
+                operation=load_operation,
+                text="Loading configuration...",
+                done_callback=done_callback
+            )
     
     def save_config_file(self):
-        """Save current configuration to a file."""
-        filepath = filedialog.asksaveasfilename(
+        """Save configuration to file."""
+        filename = filedialog.asksaveasfilename(
             title="Save Configuration",
-            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
-            defaultextension=".json"
+            defaultextension=".yaml",
+            filetypes=[("YAML files", "*.yaml"), ("All files", "*.*")]
         )
         
-        if filepath:
+        if filename:
+            # Update config from GUI before saving
+            self.update_config_from_gui()
+            
+            def save_operation():
+                try:
+                    save_config(self.config, Path(filename))
+                    return True, None
+                except Exception as e:
+                    return False, e
+            
+            def done_callback(result, error):
+                if error:
+                    messagebox.showerror("Error", f"Failed to save configuration:\n{error}")
+                else:
+                    messagebox.showinfo("Success", f"Configuration saved to {filename}")
+            
+            # Run the operation with a busy indicator
+            run_with_busy_indicator(
+                self.root,
+                operation=save_operation,
+                text="Saving configuration...",
+                done_callback=done_callback
+            )
+    
+    def check_dependencies(self):
+        """Check and display dependency status."""
+        from ..core.processing import check_processing_requirements
+        
+        def check_operation():
             try:
-                # Update config from current GUI state
-                self.update_config_from_gui()
-                save_config(self.config, Path(filepath))
-                messagebox.showinfo("Success", "Configuration saved successfully!")
+                return check_processing_requirements(self.config), None
             except Exception as e:
-                messagebox.showerror("Error", f"Failed to save configuration:\n{str(e)}")
+                return None, e
+        
+        def done_callback(result, error):
+            if error:
+                messagebox.showerror("Error", f"Error checking dependencies:\n{error}")
+            else:
+                requirements_met, errors = result
+                if requirements_met:
+                    messagebox.showinfo("Dependencies", "All required dependencies are available.")
+                else:
+                    error_msg = "Missing dependencies:\n\n" + "\n".join(f"• {error}" for error in errors)
+                    messagebox.showerror("Dependencies", error_msg)
+        
+        # Run the operation with a busy indicator
+        run_with_busy_indicator(
+            self.root,
+            operation=check_operation,
+            text="Checking dependencies...",
+            done_callback=done_callback
+        )
+    
+    def clear_logs(self):
+        """Clear all log entries."""
+        self.log_stream.clear()
+        if 'logs' in self.tabs:
+            self.tabs['logs'].refresh_display()
+        messagebox.showinfo("Logs", "All logs cleared.")
     
     def show_about(self):
         """Show about dialog."""
-        about_text = (
-            "Receipt Analyzer v1.0.0\n\n"
-            "A comprehensive tool for extracting and analyzing receipts from PDF files.\n\n"
-            "Features:\n"
-            "• Advanced receipt detection using OpenCV\n"
-            "• OCR text extraction with multiple orientations\n"
-            "• Intelligent parsing and vendor recognition\n"
-            "• Multiple export formats (images, CSV, JSON)\n"
-            "• Batch processing with progress tracking\n\n"
-            "Built with Python, Tkinter, OpenCV, and Tesseract OCR."
-        )
+        about_text = """Receipt Analyzer v1.0.0
+
+A comprehensive receipt detection and processing application
+
+Features:
+• PDF processing with embedded image extraction
+• OpenCV-based receipt detection
+• OCR with automatic orientation detection
+• Smart parsing for vendor, amount, and date
+• Self-learning vendor mapping system
+• Multiple output formats and CSV reports
+
+Built with Python, PyMuPDF, Tesseract OCR, OpenCV, and Tkinter."""
+        
         messagebox.showinfo("About Receipt Analyzer", about_text)
     
     def update_gui_from_config(self):
-        """Update GUI components from current config."""
-        try:
-            # Update all tabs from config
-            for tab in self.tabs.values():
-                if hasattr(tab, 'update_from_config'):
-                    tab.update_from_config(self.config)
-        except Exception as e:
-            get_logger().warn(f"Error updating GUI from config: {e}")
+        """Update GUI controls from current configuration."""
+        for tab in self.tabs.values():
+            if hasattr(tab, 'update_from_config'):
+                tab.update_from_config()
     
     def update_config_from_gui(self):
-        """Update config from current GUI state."""
-        try:
-            # Update config from all tabs
-            for tab in self.tabs.values():
-                if hasattr(tab, 'update_config'):
-                    tab.update_config(self.config)
-        except Exception as e:
-            get_logger().warn(f"Error updating config from GUI: {e}")
+        """Update configuration from GUI controls."""
+        for tab in self.tabs.values():
+            if hasattr(tab, 'update_config'):
+                tab.update_config()
     
     def set_processing_state(self, is_processing: bool):
         """Thread-safe method to set processing state."""
@@ -514,13 +582,84 @@ class ReceiptAnalyzerApp:
             error_msg = f"Critical error during processing: {str(e)}"
             get_logger().error(error_msg)
             self.worker_queue.put(("error", {"message": error_msg, "show_dialog": True}))
+        """
+        try:
+            from ..core.processing import process_pdf_files
+            from ..core.pdf_io import find_pdf_files
+            from ..core.threading_utils import CancellationToken, ProgressCallback, OperationCancelledException
+            import traceback
+
+            # Create cancellation token
+            cancellation_token = CancellationToken()
+            
+            # Create progress callback
+            def progress_update(current, total, message):
+                if not self.cancel_processing:
+                    q.put(("progress", (current, total)))
+                    if message:
+                        q.put(("detail", message))
+            
+            progress_callback = ProgressCallback(progress_update)
+
+            # Find PDF files (blocking)
+            try:
+                pdf_files = find_pdf_files(input_dir)
+            except Exception as e:
+                q.put(("error", f"Error finding PDF files: {e}"))
+                return
+            if not pdf_files:
+                q.put(("error", f"No PDF files found in {input_dir}"))
+                return
+            q.put(("detail", f"Found {len(pdf_files)} PDF files to process"))
+            q.put(("progress", (0, len(pdf_files))))
+
+            total_receipts = 0
+            success_count = 0
+            
+            for i, pdf_path in enumerate(pdf_files):
+                # Check for cancellation and update token
+                if self.cancel_processing:
+                    cancellation_token.cancel()
+                    q.put(("cancelled", None))
+                    return
+                    
+                q.put(("progress", (i+1, len(pdf_files))))
+                q.put(("file", pdf_path.name))
+                q.put(("detail", f"Processing file {i+1}/{len(pdf_files)}: {pdf_path.name}"))
+                
+                try:
+                    receipt_count = process_pdf_files([pdf_path], output_dir, self.config, self.vendor_map, 
+                                                   cancellation_token, progress_callback)
+                    if receipt_count > 0:
+                        success_count += 1
+                        total_receipts += receipt_count
+                        q.put(("detail", f"Extracted {receipt_count} receipts from {pdf_path.name}"))
+                        
+                except OperationCancelledException:
+                    q.put(("cancelled", None))
+                    return
+                except Exception as e:
+                    q.put(("detail", f"Error processing {pdf_path.name}: {e}"))
+                    
+            if self.cancel_processing:
+                cancellation_token.cancel()
+                q.put(("cancelled", None))
+                return
+                
+            summary = (
+                f"Processing completed!\n\n"
+                f"Files processed: {success_count}/{len(pdf_files)}\n"
+                f"Total receipts: {total_receipts}\n"
+            )
+            q.put(("done", summary))
+        except Exception as e:
+            error_msg = f"Critical error during processing: {str(e)}"
+            get_logger().error(error_msg)
+            self.worker_queue.put(("error", {"message": error_msg, "show_dialog": True}))
 
     def check_processing_status(self):
         """Check if processing is still running and update UI accordingly."""
-        with self.state_lock:
-            is_proc = self.is_processing
-            
-        if not is_proc:
+        if not self.is_processing:
             return
         
         try:
@@ -530,42 +669,183 @@ class ReceiptAnalyzerApp:
                 self.root.after(500, self.check_processing_status)
             else:
                 # Processing has finished or been cancelled
-                # But don't change state here - let the completion handlers do it
-                pass
+                self.root.after(0, lambda: self.set_processing_state(False))
+                
+                # Restore normal cursor
         except Exception as e:
-            get_logger().warn(f"Error checking processing status: {e}")
+            # If status checking fails, try to clean up gracefully
+            get_logger().warn(f"Error in processing status check: {e}")
+            self.root.after(0, lambda: self.set_processing_state(False))
+            self.root.config(cursor="")
+            for tab in self.tabs.values():
+                if hasattr(tab, 'frame'):
+                    tab.frame.config(cursor="")
     
-    def on_closing(self):
-        """Handle window closing event."""
-        # Check if processing is running
-        with self.state_lock:
-            is_proc = self.is_processing
+    def _process_files(self, input_dir: Path, output_dir: Path):
+        """Process files in background thread."""
+        try:
+            from ..core.processing import process_pdf_files
+            from ..core.pdf_io import find_pdf_files
             
-        if is_proc:
-            result = messagebox.askquestion(
-                "Processing in Progress",
-                "Processing is still running. Do you want to cancel it and exit?",
-                icon='warning'
-            )
-            if result != 'yes':
+            # Find PDF files
+            pdf_files = find_pdf_files(input_dir)
+            if not pdf_files:
+                self.root.after(0, lambda: get_logger().warn(f"No PDF files found in {input_dir}"))
+                self.root.after(0, lambda: messagebox.showwarning("No PDFs", f"No PDF files found in {input_dir}"))
+                self.root.after(0, lambda: self.set_processing_state(False))
                 return
             
-            # Cancel processing
-            self.stop_processing()
+            # Set initial status
+            self.root.after(0, lambda: self.status_var.set(f"Processing {len(pdf_files)} PDF files..."))
             
-            # Give it a moment to cancel gracefully
-            if self.processing_thread and self.processing_thread.is_alive():
-                self.processing_thread.join(timeout=2.0)
+            # Add initial status to dialog if it exists
+            if hasattr(self, 'processing_dialog') and self.processing_dialog and self.processing_dialog.dialog:
+                self.root.after(0, lambda: self.processing_dialog.add_detail(f"Found {len(pdf_files)} PDF files to process"))
+            
+            # Process files with exception handling for each file
+            total_receipts = 0
+            success_count = 0
+            
+            for i, pdf_path in enumerate(pdf_files):
+                # Check for cancellation
+                if self.cancel_processing:
+                    self.root.after(0, lambda: get_logger().info("Processing cancelled by user"))
+                    
+                    # Add cancellation status to dialog
+                    if hasattr(self, 'processing_dialog') and self.processing_dialog and self.processing_dialog.dialog:
+                        self.root.after(0, lambda: self.processing_dialog.add_detail("Processing cancelled by user"))
+                        
+                    break
+                    
+                try:
+                    # Update progress counter
+                    self.progress_count = i + 1
+                    
+                    # Add debug logging
+                    self.root.after(0, lambda i=i, total=len(pdf_files), path=pdf_path: 
+                                   get_logger().debug(f"Starting processing of file {i+1}/{total}: {path.name}"))
+                    
+                    # Update status on main thread
+                    self.root.after(0, lambda i=i, total=len(pdf_files), 
+                                    path=pdf_path: self.status_var.set(
+                                    f"Processing file {i+1}/{total}: {path.name}"))
+                    
+                    # Update file info in dialog
+                    if hasattr(self, 'processing_dialog') and self.processing_dialog and self.processing_dialog.dialog:
+                        self.root.after(0, lambda path=pdf_path: self.processing_dialog.file_var.set(path.name))
+                        self.root.after(0, lambda i=i, total=len(pdf_files): 
+                                      self.processing_dialog.add_detail(f"Processing file {i+1}/{total}: {pdf_path.name}"))
+                    
+                    # Force GUI update before starting intensive processing
+                    import time
+                    time.sleep(0.1)  # Small delay to allow GUI updates
+                    
+                    # Log before processing starts
+                    self.root.after(0, lambda path=pdf_path: 
+                                   get_logger().debug(f"About to call process_pdf_files for {path.name}"))
+                    
+                    # Process file with better error handling
+                    receipt_count = process_pdf_files([pdf_path], output_dir, self.config, self.vendor_map)
+                    
+                    # Log after processing completes
+                    self.root.after(0, lambda path=pdf_path, count=receipt_count: 
+                                   get_logger().debug(f"process_pdf_files completed for {path.name}, found {count} receipts"))
+                    
+                    if receipt_count > 0:
+                        success_count += 1
+                        total_receipts += receipt_count
+                        
+                        # Add success status to dialog
+                        if hasattr(self, 'processing_dialog') and self.processing_dialog and self.processing_dialog.dialog:
+                            self.root.after(0, lambda path=pdf_path, count=receipt_count: 
+                                          self.processing_dialog.add_detail(f"Extracted {count} receipts from {path.name}"))
+                except Exception as e:
+                    # Log error but continue with next file
+                    self.root.after(0, lambda pdf=pdf_path, err=e: get_logger().fail(
+                        f"Failed to process {pdf.name}: {err}"))
+                        
+                    # Add error status to dialog
+                    if hasattr(self, 'processing_dialog') and self.processing_dialog and self.processing_dialog.dialog:
+                        self.root.after(0, lambda pdf=pdf_path, err=e: 
+                                      self.processing_dialog.add_detail(f"Error processing {pdf.name}: {err}"))
+            
+            # Skip completion message if cancelled
+            if not self.cancel_processing:
+                # Show completion message on main thread
+                self.root.after(0, lambda: messagebox.showinfo(
+                    "Processing Complete", 
+                    f"Processing completed!\n\n"
+                    f"Files processed: {success_count}/{len(pdf_files)}\n"
+                    f"Total receipts: {total_receipts}\n"
+                    f"Output saved to: {output_dir}"
+                ))
+            else:
+                # Show cancellation message
+                self.root.after(0, lambda: messagebox.showinfo(
+                    "Processing Cancelled", 
+                    f"Processing was cancelled.\n\n"
+                    f"Files processed: {success_count}/{len(pdf_files)}\n"
+                    f"Total receipts: {total_receipts}\n"
+                    f"Output saved to: {output_dir}"
+                ))
         
-        # Save configuration
-        try:
-            self.update_config_from_gui()
-            save_config(self.config)
-            save_vendor_map(self.vendor_map)
-        except Exception:
-            pass  # Don't prevent closing if save fails
+        except Exception as e:
+            # Show error on main thread
+            self.root.after(0, lambda err=e: messagebox.showerror(
+                "Processing Error", 
+                f"An error occurred during processing:\n\n{err}"
+            ))
+        
+        finally:
+            # Reset processing state on main thread
+            self.root.after(0, lambda: self.set_processing_state(False))
+    
+    def on_closing(self):
+        """Handle application closing."""
+        if self.is_processing:
+            response = messagebox.askyesnocancel(
+                "Quit", 
+                "Processing is in progress.\n\n"
+                "• Click 'Yes' to cancel processing and quit\n"
+                "• Click 'No' to quit immediately (may cause data loss)\n"
+                "• Click 'Cancel' to return to the application",
+                icon=messagebox.WARNING
+            )
             
-        self.root.quit()
+            if response is None:  # Cancel
+                return
+                
+            if response:  # Yes - cancel and quit
+                self.cancel_processing = True
+                self.status_var.set("Cancelling and preparing to exit...")
+                
+                # Give the processing a moment to respond to cancellation
+                def delayed_quit():
+                    # Save configuration and vendor map
+                    try:
+                        self.update_config_from_gui()
+                        save_config(self.config)
+                        save_vendor_map(self.vendor_map)
+                    except Exception:
+                        pass  # Don't prevent closing if save fails
+                    
+                    self.root.quit()
+                
+                self.root.after(1000, delayed_quit)
+                return
+                
+            # No - force quit immediately
+            self.root.quit()
+        else:
+            # Save configuration and vendor map
+            try:
+                self.update_config_from_gui()
+                save_config(self.config)
+                save_vendor_map(self.vendor_map)
+            except Exception:
+                pass  # Don't prevent closing if save fails
+            
+            self.root.quit()
     
     def run(self):
         """Start the GUI application."""

@@ -287,6 +287,29 @@ def perform_ocr(image: Image.Image, config: OCRConfig, pdf_path: str, page_num: 
         return "", {}
 
 
+def extract_text_from_image(image: Image.Image, config: OCRConfig = None) -> str:
+    """
+    Simple wrapper function for text extraction from image.
+    
+    Args:
+        image: PIL Image to process
+        config: OCR configuration (optional, uses default if None)
+    
+    Returns:
+        Extracted text string
+    """
+    if config is None:
+        # Create default config if none provided
+        config = OCRConfig()
+    
+    try:
+        text, _ = extract_text_with_orientation(image, config)
+        return text
+    except Exception:
+        # Fallback to simple extraction if orientation detection fails
+        return extract_text_simple(image, config)
+
+
 def validate_ocr_quality(text: str, min_words: int = 3, min_chars: int = 10) -> Tuple[bool, str]:
     """
     Validate OCR quality based on extracted text.

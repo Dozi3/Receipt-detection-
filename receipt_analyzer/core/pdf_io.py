@@ -6,9 +6,10 @@ from pathlib import Path
 from typing import List, Tuple, Optional, Union
 import io
 import traceback
-import threading
 
 from .logging_utils import get_logger, format_pdf_log
+from .error_handling import handle_pdf_errors, handle_image_errors, with_resource_cleanup, create_error_context
+from .resource_management import pdf_document, memory_managed_operation, get_resource_tracker
 
 
 def check_dependencies() -> Tuple[bool, List[str]]:
@@ -41,75 +42,73 @@ def check_dependencies() -> Tuple[bool, List[str]]:
     return len(missing) == 0, missing + warnings
 
 
+@handle_pdf_errors
 def extract_embedded_images(pdf_path: Path, page_num: int) -> List[Image.Image]:
     """Extract embedded images from a PDF page using PyMuPDF."""
     logger = get_logger()
     images = []
+    tracker = get_resource_tracker()
     
-    try:
-        logger.debug(f"Opening PDF file: {pdf_path}")
-        doc = fitz.open(pdf_path)
-        
-        if page_num >= len(doc):
-            logger.fail(format_pdf_log(str(pdf_path), page_num + 1, "page number out of range"))
-            return []
-        
-        logger.debug(f"Accessing page {page_num+1} of {len(doc)}")
-        page = doc[page_num]
-        
-        # Log page dimensions and rotation
-        logger.debug(f"Page dimensions: {page.rect.width}x{page.rect.height} points, rotation: {page.rotation}")
-        
-        logger.debug("Getting image list from page")
-        image_list = page.get_images()
-        
-        if not image_list:
-            logger.info(format_pdf_log(str(pdf_path), page_num + 1, "no embedded images found"))
-            return []
-        
-        logger.debug(f"Found {len(image_list)} embedded images")
-        
-        for img_index, img in enumerate(image_list):
+    with memory_managed_operation(f"Extract images from {pdf_path.name}") as monitor:
+        with pdf_document(pdf_path, "Extract embedded images") as doc:
+            tracker.track_pdf(str(pdf_path))
+            
             try:
-                logger.debug(f"Processing embedded image {img_index+1}")
-                # Get image data
-                xref = img[0]
-                logger.debug(f"Getting pixmap for image with xref: {xref}")
-                pix = fitz.Pixmap(doc, xref)
+                if page_num >= len(doc):
+                    logger.fail(format_pdf_log(str(pdf_path), page_num + 1, "page number out of range"))
+                    return []
+
+                logger.debug(f"Accessing page {page_num+1} of {len(doc)}")
+                page = doc[page_num]
                 
-                logger.debug(f"Pixmap created, size: {pix.width}x{pix.height}, components: {pix.n}, alpha: {pix.alpha}")
+                # Log page dimensions and rotation
+                logger.debug(f"Page dimensions: {page.rect.width}x{page.rect.height} points, rotation: {page.rotation}")
                 
-                # Convert to PIL Image
-                if pix.n - pix.alpha < 4:  # GRAY or RGB
-                    logger.debug("Converting GRAY or RGB pixmap to PIL Image")
-                    img_data = pix.tobytes("ppm")
-                    pil_image = Image.open(io.BytesIO(img_data))
-                else:  # CMYK
-                    logger.debug("Converting CMYK pixmap to PIL Image")
-                    img_data = pix.tobytes("ppm")
-                    pil_image = Image.open(io.BytesIO(img_data))
+                logger.debug("Getting image list from page")
+                image_list = page.get_images()
                 
-                # Check if image is valid and has reasonable dimensions
-                if pil_image.size[0] > 10 and pil_image.size[1] > 10:
-                    images.append(pil_image)
-                    logger.info(format_pdf_log(str(pdf_path), page_num + 1, 
-                                             f"extracted embedded image {img_index + 1} ({pil_image.size[0]}x{pil_image.size[1]})"))
-                else:
-                    logger.warn(format_pdf_log(str(pdf_path), page_num + 1, 
-                                             f"skipping embedded image {img_index + 1}: too small ({pil_image.size[0]}x{pil_image.size[1]})"))
+                if not image_list:
+                    logger.info(format_pdf_log(str(pdf_path), page_num + 1, "no embedded images found"))
+                    return []
                 
-                pix = None  # Free memory
+                logger.debug(f"Found {len(image_list)} embedded images")
+                monitor.check_memory("found images")
                 
-            except Exception as e:
-                logger.warn(format_pdf_log(str(pdf_path), page_num + 1, 
-                                         f"failed to extract embedded image {img_index + 1}: {e}"))
-                logger.debug(f"Exception details: {traceback.format_exc()}")
-        
-        doc.close()
-        
-    except Exception as e:
-        logger.fail(format_pdf_log(str(pdf_path), page_num + 1, f"failed to extract embedded images: {e}"))
-        logger.debug(f"Exception details: {traceback.format_exc()}")
+                for img_index, img in enumerate(image_list):
+                    with create_error_context("Extract single image", 
+                                            img_index=img_index+1, pdf_path=str(pdf_path)):
+                        logger.debug(f"Processing embedded image {img_index+1}")
+                        # Get image data
+                        xref = img[0]
+                        logger.debug(f"Getting pixmap for image with xref: {xref}")
+                        pix = fitz.Pixmap(doc, xref)
+                        
+                        logger.debug(f"Pixmap created, size: {pix.width}x{pix.height}, components: {pix.n}, alpha: {pix.alpha}")
+                        
+                        # Convert to PIL Image
+                        if pix.n - pix.alpha < 4:  # GRAY or RGB
+                            logger.debug("Converting GRAY or RGB pixmap to PIL Image")
+                            img_data = pix.tobytes("ppm")
+                            pil_image = Image.open(io.BytesIO(img_data))
+                        else:  # CMYK
+                            logger.debug("Converting CMYK pixmap to PIL Image")
+                            img_data = pix.tobytes("ppm")
+                            pil_image = Image.open(io.BytesIO(img_data))
+                        
+                        # Check if image is valid and has reasonable dimensions
+                        if pil_image.size[0] > 10 and pil_image.size[1] > 10:
+                            images.append(pil_image)
+                            logger.info(format_pdf_log(str(pdf_path), page_num + 1, 
+                                                     f"extracted embedded image {img_index + 1} ({pil_image.size[0]}x{pil_image.size[1]})"))
+                        else:
+                            logger.warn(format_pdf_log(str(pdf_path), page_num + 1, 
+                                                     f"skipping embedded image {img_index + 1}: too small ({pil_image.size[0]}x{pil_image.size[1]})"))
+                        
+                        pix = None  # Free memory immediately
+                        monitor.check_memory(f"processed image {img_index+1}")
+                        
+            finally:
+                tracker.untrack_pdf(str(pdf_path))
     
     return images
 
@@ -148,7 +147,8 @@ def rasterize_page_pymupdf(pdf_path: Path, page_num: int, dpi: int = 200) -> Opt
         return None
 
 
-def rasterize_page_pdf2image(pdf_path: Path, page_num: int, dpi: int = 200) -> Optional[Image.Image]:
+def rasterize_page_pdf2image(pdf_path: Path, page_num: int, dpi: int = 200, 
+                            cancellation_token=None) -> Optional[Image.Image]:
     """Rasterize a PDF page using pdf2image (requires Poppler)."""
     logger = get_logger()
     
@@ -158,63 +158,59 @@ def rasterize_page_pdf2image(pdf_path: Path, page_num: int, dpi: int = 200) -> O
     except ImportError:
         logger.warn(format_pdf_log(str(pdf_path), page_num + 1, "pdf2image not available for raster fallback"))
         return None
+    
+    # Check for cancellation
+    if cancellation_token and cancellation_token.is_cancelled():
+        return None
         
-    # Check if Poppler is available by attempting a conversion with timeout
+    # Use standardized timeout handling
     try:
-        from pdf2image import convert_from_path
-        import threading
-        import time
+        from .threading_utils import with_timeout
         
-        # Define a function to attempt conversion
-        def attempt_conversion():
-            nonlocal result
-            try:
-                result = convert_from_path(
-                    pdf_path,
-                    dpi=dpi,
-                    first_page=page_num + 1,
-                    last_page=page_num + 1
-                )
-            except Exception as e:
-                logger.warn(format_pdf_log(str(pdf_path), page_num + 1, f"pdf2image conversion failed: {e}"))
-                result = None
-        
-        # Try conversion with timeout
-        result = None
-        conversion_thread = threading.Thread(target=attempt_conversion)
-        conversion_thread.daemon = True
-        conversion_thread.start()
-        
-        # Wait up to 15 seconds
-        conversion_thread.join(timeout=15)
-        
-        if conversion_thread.is_alive():
-            logger.warn(format_pdf_log(str(pdf_path), page_num + 1, "pdf2image conversion timed out after 15 seconds"))
-            return None
+        def convert_page():
+            # Check for cancellation before starting
+            if cancellation_token and cancellation_token.is_cancelled():
+                return None
+                
+            from pdf2image import convert_from_path
+            result = convert_from_path(
+                pdf_path,
+                dpi=dpi,
+                first_page=page_num + 1,
+                last_page=page_num + 1
+            )
             
+            # Check for cancellation after conversion
+            if cancellation_token and cancellation_token.is_cancelled():
+                return None
+                
+            return result
+        
+        # Execute with timeout
+        result = with_timeout(convert_page, timeout=15.0)
+        
         if not result:
             return None
             
         if result:
             image = result[0]
             logger.info(format_pdf_log(str(pdf_path), page_num + 1, 
-                                     f"rasterized page with pdf2image at {dpi} DPI ({image.size[0]}x{image.size[1]})"))
+                                     f"pdf2image rasterized page at {dpi} DPI ({image.size[0]}x{image.size[1]})"))
             return image
-        else:
-            logger.warn(format_pdf_log(str(pdf_path), page_num + 1, "pdf2image returned no images"))
-            return None
             
-    except ImportError:
-        logger.warn(format_pdf_log(str(pdf_path), page_num + 1, "Poppler not available for pdf2image fallback"))
-        return None
     except Exception as e:
-        logger.warn(format_pdf_log(str(pdf_path), page_num + 1, f"pdf2image rasterization failed: {e}"))
+        logger.warn(format_pdf_log(str(pdf_path), page_num + 1, f"pdf2image conversion failed: {e}"))
         return None
 
 
-def get_page_images(pdf_path: Path, page_num: int, dpi: int = 200) -> List[Image.Image]:
+def get_page_images(pdf_path: Path, page_num: int, dpi: int = 200, 
+                   cancellation_token=None) -> List[Image.Image]:
     """Get images from a PDF page, trying embedded images first, then rasterization."""
     logger = get_logger()
+    
+    # Check for cancellation
+    if cancellation_token and cancellation_token.is_cancelled():
+        return []
     
     # Try embedded images first
     try:
@@ -224,21 +220,29 @@ def get_page_images(pdf_path: Path, page_num: int, dpi: int = 200) -> List[Image
     except Exception as e:
         logger.warn(format_pdf_log(str(pdf_path), page_num + 1, f"error extracting embedded images: {e}"))
     
+    # Check for cancellation before rasterization
+    if cancellation_token and cancellation_token.is_cancelled():
+        return []
+    
     # Fallback to rasterization
     logger.info(format_pdf_log(str(pdf_path), page_num + 1, "no embedded images, trying rasterization"))
     
     # Try PyMuPDF rasterization first
     try:
         raster_image = rasterize_page_pymupdf(pdf_path, page_num, dpi)
-        if raster_image:
+        if raster_image and not (cancellation_token and cancellation_token.is_cancelled()):
             return [raster_image]
     except Exception as e:
         logger.warn(format_pdf_log(str(pdf_path), page_num + 1, f"PyMuPDF rasterization error: {e}"))
     
+    # Check for cancellation before fallback
+    if cancellation_token and cancellation_token.is_cancelled():
+        return []
+    
     # Try pdf2image as fallback
     logger.info(format_pdf_log(str(pdf_path), page_num + 1, "PyMuPDF rasterization failed, trying pdf2image"))
     try:
-        raster_image = rasterize_page_pdf2image(pdf_path, page_num, dpi)
+        raster_image = rasterize_page_pdf2image(pdf_path, page_num, dpi, cancellation_token)
         if raster_image:
             return [raster_image]
     except Exception as e:

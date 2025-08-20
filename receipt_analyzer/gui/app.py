@@ -303,11 +303,14 @@ class ReceiptAnalyzerApp:
 
         # Start the worker thread
         self.processing_thread = threading.Thread(
-            target=self._worker_process,
+            target=self._worker_process_wrapper,
             args=(input_dir, output_dir),
             daemon=True
         )
         self.processing_thread.start()
+
+        # Start a watchdog timer to detect hanging
+        self._start_processing_watchdog()
 
         # Show processing status dialog
         try:
@@ -473,6 +476,58 @@ class ReceiptAnalyzerApp:
         if 'input_run' in self.tabs:
             self.tabs['input_run'].progress_text_var.set("Cancelling...")
 
+    def _start_processing_watchdog(self):
+        """Start a watchdog timer to detect if processing hangs."""
+        import time
+        self._last_worker_activity = time.time()
+        self._check_worker_activity()
+
+    def _check_worker_activity(self):
+        """Check if the worker thread is still active."""
+        import time
+        
+        with self.state_lock:
+            still_processing = self.is_processing
+            
+        if not still_processing:
+            return  # Processing completed normally
+            
+        current_time = time.time()
+        time_since_activity = current_time - self._last_worker_activity
+        
+        # If no activity for more than 30 seconds, consider it hung
+        if time_since_activity > 30:
+            get_logger().error("Worker thread appears to be hung - forcing termination")
+            self.worker_queue.put(("error", {
+                "message": "Processing appears to be stuck. This might be due to a corrupted PDF or system issue. Please try again with a different file.",
+                "show_dialog": True
+            }))
+            return
+            
+        # Continue monitoring
+        self.root.after(5000, self._check_worker_activity)  # Check every 5 seconds
+
+    def _update_worker_activity(self):
+        """Update the last worker activity timestamp."""
+        import time
+        self._last_worker_activity = time.time()
+
+    def _worker_process_wrapper(self, input_dir: Path, output_dir: Path):
+        """Wrapper that tracks activity and handles timeouts."""
+        import time
+        self._last_worker_activity = time.time()
+        
+        try:
+            self._worker_process(input_dir, output_dir)
+        except Exception as e:
+            import traceback
+            error_msg = f"Worker process crashed: {str(e)}"
+            tb = traceback.format_exc()
+            get_logger().error(f"{error_msg}\nTraceback: {tb}")
+            self.worker_queue.put(("error", {"message": error_msg, "show_dialog": True}))
+        finally:
+            get_logger().debug("Worker process wrapper finished")
+
     def _worker_process(self, input_dir: Path, output_dir: Path):
         """
         Worker thread: does all blocking work and communicates with the GUI via queue.
@@ -483,9 +538,12 @@ class ReceiptAnalyzerApp:
             from ..core.pdf_io import find_pdf_files
             
             get_logger().debug(f"Worker process started: input={input_dir}, output={output_dir}")
+            self._update_worker_activity()
             
             # Find PDF files
             pdf_files = find_pdf_files(input_dir)
+            self._update_worker_activity()
+            
             if not pdf_files:
                 self.worker_queue.put(("status", f"No PDF files found in {input_dir}"))
                 self.worker_queue.put(("error", {"message": f"No PDF files found in {input_dir}", "show_dialog": True}))
@@ -511,6 +569,7 @@ class ReceiptAnalyzerApp:
                     
                 try:
                     get_logger().debug(f"Starting to process file {i+1}/{len(pdf_files)}: {pdf_path.name}")
+                    self._update_worker_activity()
                     
                     # Update progress
                     self.worker_queue.put(("progress", (i + 1, len(pdf_files))))
@@ -520,7 +579,15 @@ class ReceiptAnalyzerApp:
                     
                     # Process file with error handling
                     get_logger().debug(f"Calling process_pdf_files for {pdf_path.name}")
+                    self._update_worker_activity()
+                    
+                    # Create a progress callback to keep activity updated
+                    def activity_callback():
+                        self._update_worker_activity()
+                    
                     receipt_count = process_pdf_files([pdf_path], output_dir, self.config, self.vendor_map)
+                    
+                    self._update_worker_activity()
                     get_logger().debug(f"Finished process_pdf_files for {pdf_path.name}, got {receipt_count} receipts")
                     
                     if receipt_count > 0:
